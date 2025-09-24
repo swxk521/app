@@ -13,7 +13,7 @@
 
 ### 2. 自适应FW3/FW4防火墙
 - 自动检测系统使用的防火墙类型
-- 兼容OpenWrt不同版本的防火墙系统（仅在iStoreOS、LEDE上测试，理论上所有OpenWRT版本通用，请自行测试）
+- 兼容OpenWrt不同版本的防火墙系统（仅在[iStoreOS](https://github.com/istoreos/istoreos)、[LEDE](https://github.com/coolsnowwolf/lede)、[OpenWrt](https://github.com/openwrt/openwrt)上测试，理论上所有OpenWRT版本通用，请自行测试）
 
 ### 3. 支持IPv4/IPv6双协议栈
 - 同时支持IPv4和IPv6地址过滤
@@ -49,5 +49,6 @@
 <img width="1864" height="176" alt="image" src="https://github.com/user-attachments/assets/d2cfc356-3f0f-49c7-bfb4-d4c4d035eae2" />
 
 ## 界面
-<img width="1920" height="1020" alt="image" src="https://github.com/user-attachments/assets/8c54880a-7193-46f1-88c3-46684b27245a" />
+<img width="1920" height="1020" alt="image" src="https://github.com/user-attachments/assets/248ec412-cc2a-4f87-b443-aa2e72511abb" />
+
 
