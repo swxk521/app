@@ -9,13 +9,6 @@ FW3_IP6=$(command -v ip6tables 2>/dev/null)
 PIDFILE="/var/run/timecontrol.pid"
 SLEEPTIME=60
 
-interface=$(
-	. /lib/functions/network.sh
-
-	network_is_up "lan" && network_get_device device "lan"
-	echo "${device:-br-lan}"
-)
-
 iptables_w() {
 	iptables -w 1 "$@" >/dev/null 2>&1
 	[ -n "$FW3_IP6" ] && ip6tables -w 1 "$@" >/dev/null 2>&1
@@ -68,6 +61,7 @@ add_controlRules() {
 	local timerangelist=$(config_n_get "$CONF" "$1" "timerangelist" "00:00:00-23:59:59")
 	local weekdays=$(config_n_get "$CONF" "$1" "weekdays" "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday")
 	local unblockDuration=$(config_n_get "$CONF" "$1" "unblockDuration" 0)
+	local interface=$(config_n_get "$CONF" "$1" "interface")
 
 	if [ $enable -ne 1 ] || [ $unblockDuration -gt 0 ]; then
 		return 0
@@ -77,6 +71,10 @@ add_controlRules() {
 
 	if [ -z "$FW4" ]; then
 		local chain target
+		local iifname_param
+		if [ -n "$interface" ]; then
+			iifname_param="-i ${interface}"
+		fi
 		for timerange in $timerangelist; do
 			timeon=$(echo "$timerange" | awk -F '-' '{print $1}')
 			timeoff=$(echo "$timerange" | awk -F '-' '{print $2}')
@@ -95,10 +93,10 @@ add_controlRules() {
 				esac
 
 				if [ -z "${macaddrlist}" ]; then
-					iptables_w -t $table -A $chain -m time --kerneltz --timestart $timeon --timestop $timeoff --weekdays "$weekdays" -j $target -m comment --comment "!fw3: Time control"
+					iptables_w -t $table -A $chain $iifname_param -m time --kerneltz --timestart $timeon --timestop $timeoff --weekdays "$weekdays" -j $target -m comment --comment "!fw3: Time control"
 				else
 					for macaddr in $macaddrlist; do
-						iptables_w -t $table -A $chain -m mac --mac-source $macaddr -m time --kerneltz --timestart $timeon --timestop $timeoff --weekdays "$weekdays" -j $target -m comment --comment "!fw3: Time control"
+						iptables_w -t $table -A $chain $iifname_param -m mac --mac-source $macaddr -m time --kerneltz --timestart $timeon --timestop $timeoff --weekdays "$weekdays" -j $target -m comment --comment "!fw3: Time control"
 					done
 				fi
 			done
@@ -135,8 +133,13 @@ add_controlRules() {
 			meta_day_param="meta day { ${days} } "
 		fi
 
-		TZ=UTC nft "add rule inet fw4 timecontrol_forward_reject ${ether_saddr_param} ${meta_hour_param} ${meta_day_param} counter jump handle_reject comment \"!fw4: Time control\""
-		TZ=UTC nft "add rule inet fw4 timecontrol_dstnat_accept ${ether_saddr_param} ${meta_hour_param} ${meta_day_param} counter accept comment \"!fw4: Time control\""
+		local iifname_param
+		if [ -n "$interface" ]; then
+			iifname_param="iifname \"${interface}\""
+		fi
+
+		TZ=UTC nft "add rule inet fw4 timecontrol_forward_reject ${ether_saddr_param} ${meta_hour_param} ${meta_day_param} ${iifname_param} counter jump handle_reject comment \"!fw4: Time control\""
+		TZ=UTC nft "add rule inet fw4 timecontrol_dstnat_accept ${ether_saddr_param} ${meta_hour_param} ${meta_day_param} ${iifname_param} counter accept comment \"!fw4: Time control\""
 	fi
 
 	logger -t timecontrol "Added timecontrol rule (MAC: ${macaddrlist}, Time: ${timerangelist}, Weekdays: ${weekdays})"
@@ -202,7 +205,7 @@ set_nftablesRules() {
 			for handle in $handles; do
 				nft delete rule inet fw4 $chain handle $handle 2>/dev/null
 			done
-			nft "insert rule inet fw4 $chain iifname \"${interface}\" counter jump "$jumpChain" comment \"!fw4: Time control\" " 2>/dev/null
+			nft "insert rule inet fw4 $chain counter jump "$jumpChain" comment \"!fw4: Time control\" " 2>/dev/null
 			logger -t timecontrol "set timecontrol rule position to first (chain: $chain)"
 		fi
 	done
@@ -266,10 +269,10 @@ set_iptablesRules() {
 			first_rule=$($ipt -w 1 -t $table -S $chain | sed -n '2p')
 			echo "$first_rule" | grep -q $jumpChain
 			if [ $? -ne 0 ]; then
-				while $ipt -w 1 -t $table -C $chain -i $interface -j $jumpChain 2>/dev/null; do
-					$ipt -w 1 -t $table -D $chain -i $interface -j $jumpChain 2>/dev/null
+				while $ipt -w 1 -t $table -C $chain -j $jumpChain 2>/dev/null; do
+					$ipt -w 1 -t $table -D $chain -j $jumpChain 2>/dev/null
 				done
-				$ipt -w 1 -t $table -I $chain -i $interface -j $jumpChain 2>/dev/null
+				$ipt -w 1 -t $table -I $chain -j $jumpChain 2>/dev/null
 				logger -t timecontrol "set timecontrol rule position to first (cmd: $ipt, table: $table, chain: $chain)"
 			fi
 		done
@@ -381,8 +384,8 @@ stop() {
 			*) ;;
 			esac
 			for ipt in iptables ip6tables; do
-				while $ipt -w 1 -t $table -C $chain -i $interface -j $jumpChain 2>/dev/null; do
-					$ipt -w 1 -t $table -D $chain -i $interface -j $jumpChain 2>/dev/null
+				while $ipt -w 1 -t $table -C $chain -j $jumpChain 2>/dev/null; do
+					$ipt -w 1 -t $table -D $chain -j $jumpChain 2>/dev/null
 				done
 			done
 			iptables_w -t $table -F $jumpChain

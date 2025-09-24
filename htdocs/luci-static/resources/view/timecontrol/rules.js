@@ -6,6 +6,7 @@
 'require uci';
 'require form';
 'require tools.firewall as fwtool';
+'require tools.widgets as widgets';
 
 function rule_macaddrlist_txt(s, hosts) {
 	var result = uci.get('timecontrol', s, 'macaddrlist');
@@ -34,6 +35,24 @@ function rule_timerangelist_txt(s) {
 	var items = fwtool.map_invert(result);
 	return fwtool.fmt(_('%{timerangelist}'), {
 		timerangelist: formatListWithLineBreaks(items, 1)
+	});
+}
+
+function rule_availableDuration_txt(s) {
+	var result = uci.get('timecontrol', s, 'timerangelist');
+	var duration = getAvailableDuration(result);
+	return fwtool.fmt(_('%{duration#%{next? }<var>%{item.ival}</var>}'), {
+		duration: fwtool.map_invert(duration + ' ' + _('(minutes)'))
+	});
+}
+
+function rule_Interface_txt(s) {
+	var result = uci.get('timecontrol', s, 'interface');
+	if (result === null || result === undefined || (typeof result === 'string' && result.trim() === '')) {
+		result = _('unspecified');
+	}
+	return fwtool.fmt(_('%{interface#%{next? }<var>%{item.ival}</var>}'), {
+		interface: fwtool.map_invert(result)
 	});
 }
 
@@ -68,10 +87,13 @@ function rule_weekdays_txt(s) {
 		} else {
 			result = days.map(day => weekMap[day] || day).join(' ');
 		}
-	} //else if (Array.isArray(result)) {
-	//	result = result.map(day => weekMap[day] || day);
-	//	console.log('result:', result);
-	//}
+	} else if (Array.isArray(result)) {
+		if (result.length === 7) {
+			result = _('AnyDay');
+		} else {
+			result = result.map(day => weekMap[day] || day).join(' ');
+		}
+	}
 
 	var items = fwtool.map_invert(result);
 	return fwtool.fmt(_('%{weekdays}'), {
@@ -169,13 +191,12 @@ function getFirewallChainStatus() {
 }
 
 function renderStatus(res) {
-	var spanTemp = '<em><span style="color:%s"><strong>%s%s</strong></span>\t\t<strong>|</strong>\t\t<span style="color:%s"><strong>%s: %d</strong></span></em>';
-	var renderHTML;
-	var isRunning = res.exists;
-	var statusColor = isRunning ? '#059669' : 'red';
-	var statusText = isRunning ? _('Enabled') : _('Disabled');
+	var spanTemp = '<em><span style="color:%s"><strong>%s%s</strong></span>\t\t<strong>|</strong>\t\t<a href="%s" style="color:%s;"><strong>%s: %d</strong></a></em>';
+	var statusColor = res.exists ? '#059669' : 'red';
+	var statusText = res.exists ? _('Enabled') : _('Disabled');
 	var ruleCountColor = res.ruleCount > 0 ? '#059669' : '#f59e0b';
-	renderHTML = String.format(spanTemp, statusColor, _('Control'), statusText, ruleCountColor, _('Control Rules'), res.ruleCount);
+	var href = L.hasSystemFeature('firewall4') ? '/cgi-bin/luci/admin/status/nftables' : '/cgi-bin/luci/admin/status/iptables';
+	var renderHTML = String.format(spanTemp, statusColor, _('Control'), statusText, href, ruleCountColor, _('Control Rules'), res.ruleCount);
 	return renderHTML;
 }
 
@@ -199,6 +220,39 @@ function sortTimeRanges(value) {
 	return ranges;
 }
 
+function parseTime(time) {
+	if (typeof time !== 'string') return null;
+	const timeRegex = /^(\d\d):(\d\d):(\d\d)$/;
+	const match = time.match(timeRegex);
+	if (!match) return null;
+	const [, h, m, s] = match;
+	const hours = parseInt(h, 10);
+	const minutes = parseInt(m, 10);
+	const seconds = parseInt(s, 10);
+	if (hours > 23 || minutes > 59 || seconds > 59) return null;
+	return hours * 3600 + minutes * 60 + seconds;
+}
+
+function getRangeSec(str) {
+	const [start, end] = str.split('-');
+	return [parseTime(start), parseTime(end)];
+}
+
+function getAvailableDuration(timeRanges) {
+	if (timeRanges === null || timeRanges === undefined || (typeof timeRanges === 'string' && timeRanges.trim() === '')) {
+		return 0;
+	} else if (Array.isArray(timeRanges) && (timeRanges.indexOf('00:00:00-23:59:59') >= 0) || (timeRanges.length === 0)) {
+		return 0;
+	}
+
+	var duration = 86400;
+	for (const r of timeRanges) {
+		const [rStart, rEnd] = getRangeSec(r);
+		duration -= (rEnd - rStart);
+	}
+	return parseInt(duration / 60, 10);
+}
+
 return view.extend({
 	callHostHints: rpc.declare({
 		object: 'luci-rpc',
@@ -214,20 +268,20 @@ return view.extend({
 	},
 
 	render: function (data) {
-		if (fwtool.checkLegacySNAT())
+		if (fwtool.checkLegacySNAT()) {
 			return fwtool.renderMigration();
-		else
+		}
+		else {
 			return this.renderRules(data);
+		}
 	},
 
 	renderRules: function (data) {
 		var hosts = data[0],
 			m, s, o;
 
-		m = new form.Map('timecontrol', _('Internet Time Control'),
-			_('Users can limit Internet usage time by MAC address, support iptables/nftables IPv4/IPv6') +
-			'<br/>' + _('Suggestion and feedback') + ": " + _("<a href='https://github.com/gaobin89/luci-app-timecontrol.git' target='_blank'>GitHub @gaobin89/luci-app-timecontrol</a>") +
-			'<br/>');
+		m = new form.Map('timecontrol', _('Internet Time Control'), _('Users can limit Internet usage time by MAC address, support iptables/nftables IPv4/IPv6') + '<br/>' +
+			_('Suggestion and feedback') + ": " + "<a href='https://github.com/gaobin89/luci-app-timecontrol.git' target='_blank'>GitHub @gaobin89/luci-app-timecontrol</a>");
 
 		s = m.section(form.TypedSection);
 		s.anonymous = true;
@@ -267,9 +321,10 @@ return view.extend({
 		for (var i = 3; i <= 12; i++) {
 			o.value(i * 60, i * 60 + ' ' + _('(minutes)'));
 		}
+
 		o.write = function (section_id, value) {
 			return true;
-		};
+		}
 
 		o.handleValueChange = function (section_id, state, ev) {
 			if (ev.target.value === null || ev.target.value.trim() === '') {
@@ -312,28 +367,40 @@ return view.extend({
 			return this.map.save(null, true);
 		};
 
-		o = s.option(form.Value, 'unblockDuration', _('Temporary Unblock'));
+		o = s.option(form.Value, '', _('Temporary Unblock'));
 		o.modalonly = false;
 		o.textvalue = function (s) {
 			return rule_unblockDuration_txt(s);
 		};
 
-		o = s.option(form.Value, 'macaddrlist', _('Client MAC'));
+		o = s.option(form.Value, '', _('Client MAC'));
 		o.modalonly = false;
 		o.textvalue = function (s) {
 			return rule_macaddrlist_txt(s, hosts);
 		};
 
-		o = s.option(form.Value, 'timerangelist', _('Time Ranges'));
+		o = s.option(form.Value, '', _('Time Ranges'));
 		o.modalonly = false;
 		o.textvalue = function (s) {
 			return rule_timerangelist_txt(s);
 		};
 
-		o = s.option(form.Value, 'weekdays', _('Week Days'));
+		o = s.option(form.Value, '', _('Available Duration'));
+		o.modalonly = false;
+		o.textvalue = function (s) {
+			return rule_availableDuration_txt(s);
+		};
+
+		o = s.option(form.Value, '', _('Week Days'));
 		o.modalonly = false;
 		o.textvalue = function (s) {
 			return rule_weekdays_txt(s);
+		};
+
+		o = s.option(form.Value, '', _('Interface'));
+		o.modalonly = false;
+		o.textvalue = function (s) {
+			return rule_Interface_txt(s);
 		};
 
 		o = s.taboption('general', form.Flag, 'enable', _('Enable'));
@@ -344,6 +411,11 @@ return view.extend({
 		o = s.taboption('general', form.Value, 'name', _('Name'));
 		o.placeholder = _('Unnamed rule');
 		o.modalonly = true;
+
+		o = s.taboption('general', widgets.DeviceSelect, 'interface', _('Interface'), _('Network interface to bind (eg: eth0)'));
+		o.nocreate = true;
+		o.modalonly = true;
+		o.unspecified = true;
 
 		o = s.taboption('general', form.Value, 'unblockDuration', _('Temporary Unblock'));
 		o.modalonly = true;
@@ -404,10 +476,11 @@ return view.extend({
 			return this.super('write', [section_id, L.toArray(value).join(' ')]);
 		};
 
-		o = s.taboption('timed', form.DynamicList, 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-23:59:59');
+		o = s.taboption('timed', form.DynamicList, 'timerangelist', _('Time Ranges'));
 		o.modalonly = true;
 		//o.default = '00:00:00-23:59:59';
 		o.placeholder = 'hh:mm:ss-hh:mm:ss';
+		o.description = _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59' + '<br>' + _('Tips') + ': ' + _('When the value is null or empty, the default range is') + ' 00:00:00-23:59:59';
 
 		o.cfgvalue = function (section_id) {
 			var value = uci.get('timecontrol', section_id, 'timerangelist');
@@ -420,24 +493,6 @@ return view.extend({
 		};
 
 		o.validate = function (section_id, value) {
-			function parseTime(time) {
-				if (typeof time !== 'string') return null;
-				const timeRegex = /^(\d\d):(\d\d):(\d\d)$/;
-				const match = time.match(timeRegex);
-				if (!match) return null;
-				const [, h, m, s] = match;
-				const hours = parseInt(h, 10);
-				const minutes = parseInt(m, 10);
-				const seconds = parseInt(s, 10);
-				if (hours > 23 || minutes > 59 || seconds > 59) return null;
-				return hours * 3600 + minutes * 60 + seconds;
-			}
-
-			function getRangeSec(str) {
-				const [start, end] = str.split('-');
-				return [parseTime(start), parseTime(end)];
-			}
-
 			function isValidTimeRange(str) {
 				const [startSec, endSec] = getRangeSec(str);
 				return startSec !== null && endSec !== null && startSec < endSec;
@@ -466,7 +521,7 @@ return view.extend({
 				if (r === value) continue;
 				const [rStart, rEnd] = getRangeSec(r);
 				if (!(endSec <= rStart || startSec >= rEnd)) {
-					return _('Time ranges overlap') + ': ' + value + ' & ' + r;
+					return _('Time ranges overlap') + ': ' + value + ' --> ' + r;
 				}
 			}
 
