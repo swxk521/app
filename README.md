@@ -1,5 +1,11 @@
 # luci-app-timecontrol
 
+![GitHub all releases](https://img.shields.io/github/downloads/gaobin89/luci-app-timecontrol/total?style=for-the-badge)
+![GitHub forks](https://img.shields.io/github/forks/gaobin89/luci-app-timecontrol?style=for-the-badge)
+![GitHub stars](https://img.shields.io/github/stars/gaobin89/luci-app-timecontrol?style=for-the-badge)
+![GitHub watchers](https://img.shields.io/github/watchers/gaobin89/luci-app-timecontrol?style=for-the-badge)
+
+
 - lua版：在[Lienol luci-app-timecontrol](https://github.com/Lienol/openwrt-package/tree/main/luci-app-timecontrol)基础上修改而来，目前已弃用。
 - Javascrip版：全新UI界面、自主开发
 
