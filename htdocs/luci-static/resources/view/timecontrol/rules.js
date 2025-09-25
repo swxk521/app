@@ -285,6 +285,7 @@ return view.extend({
 
 		s = m.section(form.TypedSection);
 		s.anonymous = true;
+
 		s.render = function () {
 			poll.add(function () {
 				return L.resolveDefault(getFirewallChainStatus()).then(function (res) {
@@ -296,16 +297,17 @@ return view.extend({
 			return E('div', { class: 'cbi-section', id: 'status_bar' }, [
 				E('p', { id: 'firewall_status' }, _('Collecting data ...'))
 			]);
-		}
+		};
 
 		s = m.section(form.NamedSection, 'config', _('Global Settings'));
 
 		o = s.option(form.Flag, 'enable', _('Enable'));
 		o.default = o.disabled;
 		o.rmempty = false;
+
 		o.handleValueChange = function (section_id, state, ev) {
 			this.map.save(null, true);
-		}
+		};
 
 		o = s.option(form.Value, 'unblockDuration', _('Temporary Unblock'), _('Set unblock duration for all rules'));
 		o.modalonly = true;
@@ -324,7 +326,7 @@ return view.extend({
 
 		o.write = function (section_id, value) {
 			return true;
-		}
+		};
 
 		o.handleValueChange = function (section_id, state, ev) {
 			if (ev.target.value === null || ev.target.value.trim() === '') {
@@ -343,7 +345,7 @@ return view.extend({
 			this.default = null;
 			this.map.reset();
 			//location.reload();
-		}
+		};
 
 		s = m.section(form.GridSection, 'rule', _('Control Rules'));
 		s.addremove = true;
@@ -362,6 +364,7 @@ return view.extend({
 		o.modalonly = false;
 		o.default = o.disabled;
 		o.editable = true;
+
 		o.handleValueChange = function (section_id, state, ev) {
 			//ui.changes.apply(true);
 			return this.map.save(null, true);
@@ -369,36 +372,42 @@ return view.extend({
 
 		o = s.option(form.Value, '', _('Temporary Unblock'));
 		o.modalonly = false;
+
 		o.textvalue = function (s) {
 			return rule_unblockDuration_txt(s);
 		};
 
 		o = s.option(form.Value, '', _('Client MAC'));
 		o.modalonly = false;
+
 		o.textvalue = function (s) {
 			return rule_macaddrlist_txt(s, hosts);
 		};
 
 		o = s.option(form.Value, '', _('Time Ranges'));
 		o.modalonly = false;
+
 		o.textvalue = function (s) {
 			return rule_timerangelist_txt(s);
 		};
 
 		o = s.option(form.Value, '', _('Available Duration'));
 		o.modalonly = false;
+
 		o.textvalue = function (s) {
 			return rule_availableDuration_txt(s);
 		};
 
 		o = s.option(form.Value, '', _('Week Days'));
 		o.modalonly = false;
+
 		o.textvalue = function (s) {
 			return rule_weekdays_txt(s);
 		};
 
 		o = s.option(form.Value, '', _('Interface'));
 		o.modalonly = false;
+
 		o.textvalue = function (s) {
 			return rule_Interface_txt(s);
 		};
@@ -456,7 +465,7 @@ return view.extend({
 				create_markup: '<li data-value="{{value}}">' + '{{value}}' + ' ' + _('(minutes)') + '</span>' + '</li>'
 			});
 			return widget.render();
-		}
+		};
 
 		fwtool.addMACOption(s, 'general', 'macaddrlist', _('Client MAC'), null, hosts);
 
@@ -472,6 +481,7 @@ return view.extend({
 		o.value('Thursday', _('Thursday'));
 		o.value('Friday', _('Friday'));
 		o.value('Saturday', _('Saturday'));
+
 		o.write = function (section_id, value) {
 			return this.super('write', [section_id, L.toArray(value).join(' ')]);
 		};
@@ -526,7 +536,7 @@ return view.extend({
 			}
 
 			return true;
-		}
+		};
 
 		return m.render();
 	}

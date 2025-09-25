@@ -142,7 +142,7 @@ add_controlRules() {
 		TZ=UTC nft "add rule inet fw4 timecontrol_dstnat_accept ${ether_saddr_param} ${meta_hour_param} ${meta_day_param} ${iifname_param} counter accept comment \"!fw4: Time control\""
 	fi
 
-	logger -t timecontrol "Added timecontrol rule (MAC: ${macaddrlist}, Time: ${timerangelist}, Weekdays: ${weekdays})"
+	logger -t timecontrol "added timecontrol rule (MAC: ${macaddrlist}; Time: ${timerangelist}; Weekdays: ${weekdays}; Interface: ${interface})"
 
 	if [ -n "$(command -v conntrack 2>/dev/null)" ]; then
 		regex=$(echo ${macaddrlist} | sed 's/ /|/g')
@@ -151,7 +151,9 @@ add_controlRules() {
 		for ipaddr in $ipaddr_list; do
 			conntrack -D --orig-src "$ipaddr" >/dev/null 2>&1
 		done
-		logger -t timecontrol "Deleted conntrack entries for IPs: ${ipaddr_list}"
+		if [ -n "$ipaddr_list" ]; then
+			logger -t timecontrol "deleted conntrack entries for IPs: ${ipaddr_list}"
+		fi
 	fi
 }
 
@@ -242,6 +244,7 @@ set_iptablesChains() {
 		done
 	done
 }
+
 set_iptablesRules() {
 	local chain jumpChain
 	for table in filter nat; do
@@ -285,6 +288,7 @@ update_ruleUnblockDuration() {
 	local timerangelist=$(config_n_get "$CONF" "$1" "timerangelist" "00:00:00-23:59:59")
 	local weekdays=$(config_n_get "$CONF" "$1" "weekdays" "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday")
 	local unblockDuration=$(config_n_get "$CONF" "$1" "unblockDuration" 0)
+	local interface=$(config_n_get "$CONF" "$1" "interface")
 
 	if [ $unblockDuration -le 0 ]; then
 		return
@@ -302,7 +306,7 @@ update_ruleUnblockDuration() {
 	fi
 	uci -q commit timecontrol
 
-	logger -t timecontrol "Update timecontrol rule's unblock duration to $unblockDuration (MAC: ${macaddrlist}, Time: ${timerangelist}, Days: ${weekdays}) "
+	logger -t timecontrol "updated timecontrol rule's unblock duration to $unblockDuration (MAC: ${macaddrlist}; Time: ${timerangelist}; Days: ${weekdays}; Interface: ${interface}) "
 }
 
 update_unblockDuration() {
@@ -329,14 +333,6 @@ reset_sleep_time() {
 	logger -t timecontrol "reset sleep time"
 }
 
-cleanup() {
-	if [ -f "$PIDFILE" ]; then
-		rm -f "$PIDFILE" >/dev/null 2>&1
-	fi
-	trap - USR1 EXIT
-	logger -t timecontrol "timecontrol cleanup done"
-}
-
 start() {
 	if [ -f "$PIDFILE" ]; then
 		pid=$(cat "$PIDFILE" 2>/dev/null)
@@ -352,7 +348,7 @@ start() {
 
 	echo $$ >"$PIDFILE"
 	trap reset_sleep_time USR1
-	trap cleanup EXIT
+	trap stop SIGHUP SIGINT SIGQUIT SIGTERM EXIT
 
 	Initialize start
 	while true; do
@@ -367,7 +363,7 @@ start() {
 }
 
 stop() {
-	logger -t timecontrol "Stopping timecontrol"
+	logger -t timecontrol "stopping timecontrol"
 
 	if [ -z "$FW4" ]; then
 		local chain jumpChain
@@ -412,11 +408,30 @@ stop() {
 		nft delete chain inet fw4 timecontrol_dstnat_accept >/dev/null 2>&1
 	fi
 	logger -t timecontrol "timecontrol stopped"
+
+	if [ "$(service timecontrol status)" != "running" ]; then
+		if [ -f "$PIDFILE" ]; then
+			rm -f "$PIDFILE" >/dev/null 2>&1
+		fi
+	fi
+	trap - SIGHUP SIGINT SIGQUIT SIGTERM EXIT USR1
+	logger -t timecontrol "timecontrol cleanup done"
+
+	exit 0
 }
 
 case "$1" in
 stop)
-	stop
+	if [ -f "$PIDFILE" ]; then
+		pid=$(cat "$PIDFILE" 2>/dev/null)
+		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+			kill -SIGTERM "$pid" 2>/dev/null
+		else
+			stop
+		fi
+	else
+		stop
+	fi
 	;;
 flush)
 	if [ -f "$PIDFILE" ]; then
