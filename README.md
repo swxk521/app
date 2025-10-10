@@ -41,8 +41,13 @@
 - 时长范围：1~720分钟
 - 提供便捷的一键解禁操作，防止给神兽临时解禁后，忘记开启
 
-### 7. FW4 nft 规则写入优化
-- 单一规则多时段采用集合方式写入规则链
+### 7. 防火墙规则写入优化
+
+#### FW3 iptables：
+- 单一规则多MAC地址采用ipset hash:mac集合方式写入规则链
+
+#### FW4 nft：
+- 单一规则多时段、多MAC地址均采用集合方式写入规则链
 - 如时段转换成UTC时段后存在跨天，则自动拆分时段
 
 #### 注：
@@ -54,7 +59,13 @@
 #### 2. 将北京时间"06:00:00-13:00:00"拆分成"06:00:00-07:59:59","08:00:00-13:00:00"后，则可正常写入
 <img width="1864" height="176" alt="image" src="https://github.com/user-attachments/assets/d2cfc356-3f0f-49c7-bfb4-d4c4d035eae2" />
 
+### 8. 管控类型
+- 支持黑/白名单切换
+- 默认为：黑名单
+- 白名单类型下支持指定拒绝接口，默认为空（即：拒绝所有接口）
+
 ## 界面
-<img width="1920" height="1020" alt="image" src="https://github.com/user-attachments/assets/248ec412-cc2a-4f87-b443-aa2e72511abb" />
+<img width="1920" height="1020" alt="image" src="https://github.com/user-attachments/assets/2e86b688-076c-4142-9bb9-81d10a10b7c5" />
+
 
 
