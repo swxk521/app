@@ -190,12 +190,13 @@ function getFirewallChainStatus() {
 	});
 }
 
+var href = L.hasSystemFeature('firewall4') ? '/cgi-bin/luci/admin/status/nftables' : '/cgi-bin/luci/admin/status/iptables';
+
 function renderStatus(res) {
 	var spanTemp = '<em><span style="color:%s"><strong>%s%s</strong></span>\t\t<strong>|</strong>\t\t<a href="%s" style="color:%s;"><strong>%s: %d</strong></a></em>';
 	var statusColor = res.exists ? '#059669' : 'red';
 	var statusText = res.exists ? _('Enabled') : _('Disabled');
 	var ruleCountColor = res.ruleCount > 0 ? '#059669' : '#f59e0b';
-	var href = L.hasSystemFeature('firewall4') ? '/cgi-bin/luci/admin/status/nftables' : '/cgi-bin/luci/admin/status/iptables';
 	var renderHTML = String.format(spanTemp, statusColor, _('Control'), statusText, href, ruleCountColor, _('Control Rules'), res.ruleCount);
 	return renderHTML;
 }
@@ -251,6 +252,49 @@ function getAvailableDuration(timeRanges) {
 		duration -= (rEnd - rStart);
 	}
 	return parseInt(duration / 60, 10);
+}
+
+// 兼容性处理：如果 form.RichListValue 不存在则自定义
+if (typeof form.RichListValue !== 'function') {
+	const CBIRichListValue = form.ListValue.extend({
+		__name__: 'CBI.RichListValue',
+		__init__() {
+			this.super('__init__', arguments);
+			this.widget = 'select';
+			this.orientation = 'horizontal';
+			this.deplist = [];
+		},
+		renderWidget(section_id, option_index, cfgvalue) {
+			const choices = this.transformChoices();
+			const widget = new ui.Dropdown((cfgvalue != null) ? cfgvalue : this.default, choices, {
+				id: this.cbid(section_id),
+				size: this.size,
+				sort: this.keylist,
+				widget: this.widget,
+				optional: this.optional,
+				orientation: this.orientation,
+				select_placeholder: this.select_placeholder || this.placeholder,
+				custom_placeholder: this.custom_placeholder || this.placeholder,
+				validate: L.bind(this.validate, this, section_id),
+				disabled: (this.readonly != null) ? this.readonly : this.map.readonly
+			});
+			return widget.render();
+		},
+		value(value, title, description) {
+			if (description) {
+				form.ListValue.prototype.value.call(this, value, E([], [
+					E('span', { 'class': 'hide-open' }, [title]),
+					E('div', { 'class': 'hide-close', 'style': 'min-width:25vw' }, [
+						E('strong', [title]), E('br'),
+						E('span', { 'style': 'white-space:normal' }, description)
+					])
+				]));
+			} else {
+				form.ListValue.prototype.value.call(this, value, title);
+			}
+		}
+	});
+	form.RichListValue = CBIRichListValue;
 }
 
 return view.extend({
@@ -345,6 +389,29 @@ return view.extend({
 			this.default = null;
 			this.map.reset();
 			//location.reload();
+		};
+
+		o = s.option(form.RichListValue, 'controlType', _('Control Type'), _('Set control type to blacklist or whitelist'));
+		o.modalonly = true;
+		o.default = '0';
+		o.value('0', _('Blacklist'), _('Blocks network access only from blacklisted addresses'));
+		o.value('1', _('Whitelist'), _('Allow network access only from whitelisted addresses'));
+
+		o.handleValueChange = function (section_id, state, ev) {
+			this.map.save(null, true);
+		};
+
+		o = s.option(widgets.DeviceSelect, 'rejectInterface', _('Reject Interface'), _('Network interface to bind (eg: eth0)')
+			+ '<br>' + _('Tips') + ': ' + _('This option is valid only when the whitelist is selected'));
+		o.depends('controlType', '1');
+		o.nocreate = true;
+		o.modalonly = true;
+		o.unspecified = true;
+		o.multiple = true;
+
+		o.handleValueChange = function (section_id, state, ev) {
+			uci.set('timecontrol', section_id, 'rejectInterface', ev.target.value);
+			uci.save();
 		};
 
 		s = m.section(form.GridSection, 'rule', _('Control Rules'));
@@ -486,11 +553,11 @@ return view.extend({
 			return this.super('write', [section_id, L.toArray(value).join(' ')]);
 		};
 
-		o = s.taboption('timed', form.DynamicList, 'timerangelist', _('Time Ranges'));
+		o = s.taboption('timed', form.DynamicList, 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59'
+			+ '<br>' + _('Tips') + ': ' + _('When the value is null or empty, the default range is') + ' 00:00:00-23:59:59');
 		o.modalonly = true;
 		//o.default = '00:00:00-23:59:59';
 		o.placeholder = 'hh:mm:ss-hh:mm:ss';
-		o.description = _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59' + '<br>' + _('Tips') + ': ' + _('When the value is null or empty, the default range is') + ' 00:00:00-23:59:59';
 
 		o.cfgvalue = function (section_id) {
 			var value = uci.get('timecontrol', section_id, 'timerangelist');

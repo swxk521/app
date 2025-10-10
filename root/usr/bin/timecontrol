@@ -3,11 +3,13 @@
 
 CONF="timecontrol"
 TIMECONTROL_ENABLE=0
+TIMECONTROL_TYPE=0
 IsUpdate=0
 FW4=$(command -v fw4 2>/dev/null)
 FW3_IP6=$(command -v ip6tables 2>/dev/null)
 PIDFILE="/var/run/timecontrol.pid"
 SLEEPTIME=60
+RulesMACAddrList=""
 
 iptables_w() {
 	iptables -w 1 "$@" >/dev/null 2>&1
@@ -48,6 +50,7 @@ get_UTC_timerange() {
 load_config() {
 	config_load "$CONF"
 	TIMECONTROL_ENABLE=$(config_n_get "$CONF" "config" "enable" 0)
+	TIMECONTROL_TYPE=$(config_n_get "$CONF" "config" "controlType" 0)
 
 	if [ $TIMECONTROL_ENABLE -ne 1 ]; then
 		logger -t timecontrol "timecontrol is disabled, exiting."
@@ -67,6 +70,12 @@ add_controlRules() {
 		return 0
 	fi
 
+	if [ -z "$RulesMACAddrList" ]; then
+		RulesMACAddrList="$macaddrlist"
+	else
+		RulesMACAddrList="$RulesMACAddrList $macaddrlist"
+	fi
+
 	weekdays=$(echo "$weekdays" | sed 's/ /,/g')
 
 	if [ -z "$FW4" ]; then
@@ -75,6 +84,16 @@ add_controlRules() {
 		if [ -n "$interface" ]; then
 			iifname_param="-i ${interface}"
 		fi
+
+		local ether_saddr_param
+		if [ -n "$macaddrlist" ]; then
+			ipset create "${CONF}_maclist_$1" hash:mac
+			for macaddr in $macaddrlist; do
+				ipset add "${CONF}_maclist_$1" $macaddr
+			done
+			ether_saddr_param="-m set --match-set ${CONF}_maclist_$1 src"
+		fi
+
 		for timerange in $timerangelist; do
 			timeon=$(echo "$timerange" | awk -F '-' '{print $1}')
 			timeoff=$(echo "$timerange" | awk -F '-' '{print $2}')
@@ -91,18 +110,11 @@ add_controlRules() {
 					;;
 				*) ;;
 				esac
-
-				if [ -z "${macaddrlist}" ]; then
-					iptables_w -t $table -A $chain $iifname_param -m time --kerneltz --timestart $timeon --timestop $timeoff --weekdays "$weekdays" -j $target -m comment --comment "!fw3: Time control"
-				else
-					for macaddr in $macaddrlist; do
-						iptables_w -t $table -A $chain $iifname_param -m mac --mac-source $macaddr -m time --kerneltz --timestart $timeon --timestop $timeoff --weekdays "$weekdays" -j $target -m comment --comment "!fw3: Time control"
-					done
-				fi
+				iptables_w -t $table -A $chain $iifname_param $ether_saddr_param -m time --kerneltz --timestart $timeon --timestop $timeoff --weekdays "$weekdays" -j $target -m comment --comment "!fw3: Time control"
 			done
 		done
 	else
-		local ether_saddr_param macaddr
+		local ether_saddr_param
 		if [ -n "$macaddrlist" ]; then
 			macaddr=$(echo $macaddrlist | sed 's/ /,/g')
 			ether_saddr_param="ether saddr { ${macaddr} } "
@@ -157,11 +169,60 @@ add_controlRules() {
 	fi
 }
 
+add_rejectRule() {
+	local rejectInterface=$(config_n_get "$CONF" "config" "rejectInterface")
+
+	RulesMACAddrList=$(echo $RulesMACAddrList | tr ' ' '\n' | awk '!a[$0]++' | tr '\n' ' ')
+
+	local ether_saddr_param iifname_param
+	if [ -z "$FW4" ]; then
+		if [ -n "$RulesMACAddrList" ]; then
+			ipset create "${CONF}_maclist" hash:mac
+			for macaddr in $RulesMACAddrList; do
+				ipset add "${CONF}_maclist" $macaddr
+			done
+			ether_saddr_param="-m set ! --match-set ${CONF}_maclist src"
+		fi
+
+		if [ -n "$rejectInterface" ]; then
+			for interface in $rejectInterface; do
+				iifname_param="-i ${interface}"
+				iptables_w -t filter -A timecontrol_forward_reject $iifname_param $ether_saddr_param -j reject -m comment --comment "!fw3: Time control"
+				iptables_w -t nat -A timecontrol_dstnat_accept $iifname_param $ether_saddr_param -j ACCEPT -m comment --comment "!fw3: Time control"
+			done
+		else
+			iptables_w -t filter -A timecontrol_forward_reject $ether_saddr_param -j reject -m comment --comment "!fw3: Time control"
+			iptables_w -t nat -A timecontrol_dstnat_accept $ether_saddr_param -j ACCEPT -m comment --comment "!fw3: Time control"
+		fi
+	else
+		if [ -n "$rejectInterface" ]; then
+			local interface=\"$(echo $rejectInterface | sed 's/ /","/g')\"
+			iifname_param="iifname { ${interface} } "
+		fi
+
+		if [ -n "$RulesMACAddrList" ]; then
+			macaddr=$(echo $RulesMACAddrList | sed 's/ /,/g')
+			ether_saddr_param="ether saddr != { ${macaddr} } "
+		fi
+
+		nft "add rule inet fw4 timecontrol_forward_reject ${iifname_param} ${ether_saddr_param} counter jump handle_reject comment \"!fw4: Time control\""
+		nft "add rule inet fw4 timecontrol_dstnat_accept ${iifname_param} ${ether_saddr_param} counter accept comment \"!fw4: Time control\""
+	fi
+}
+
+cleanup_ipset() {
+	nameList=$(ipset list -name | grep "${CONF}_maclist")
+	for name in $nameList; do
+		ipset destroy $name 2>/dev/null
+	done
+}
+
 Initialize() {
 	logger -t timecontrol ""$1"ing timecontrol"
 	load_config
 
 	if [ -z "$FW4" ]; then
+		cleanup_ipset
 		set_iptablesChains
 		set_iptablesRules
 	else
@@ -169,7 +230,17 @@ Initialize() {
 		set_nftablesRules
 	fi
 
+	RulesMACAddrList=""
+
 	config_foreach add_controlRules rule
+
+	local controltype="blacklist"
+	if [ $TIMECONTROL_TYPE -ne 0 ]; then
+		add_rejectRule
+		controltype="whitelist"
+	fi
+
+	logger -t timecontrol "control type --> $controltype"
 	logger -t timecontrol "timecontrol "$1"ed"
 }
 
@@ -387,6 +458,7 @@ stop() {
 			iptables_w -t $table -F $jumpChain
 			iptables_w -t $table -X $jumpChain
 		done
+		cleanup_ipset
 	else
 		for chain in forward dstnat; do
 			local jumpChain

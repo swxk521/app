@@ -112,3 +112,27 @@ msgstr "提示"
 
 msgid "When the value is null or empty, the default range is"
 msgstr "当值为空时，默认值为"
+
+msgid "Control Type"
+msgstr "管控类型"
+
+msgid "Set control type to blacklist or whitelist"
+msgstr "设置管控类型为黑名单或白名单"
+
+msgid "Blacklist"
+msgstr "黑名单"
+
+msgid "Blocks network access only from blacklisted addresses"
+msgstr "仅阻止来自黑名单地址的网络访问"
+
+msgid "Whitelist"
+msgstr "白名单"
+
+msgid "Allow network access only from whitelisted addresses"
+msgstr "仅允许来自白名单地址的网络访问"
+
+msgid "Reject Interface"
+msgstr "拒绝接口"
+
+msgid "This option is valid only when the whitelist is selected"
+msgstr "此选项仅在选择白名单时有效"
