@@ -70,10 +70,12 @@ add_controlRules() {
 		return 0
 	fi
 
-	if [ -z "$RulesMACAddrList" ]; then
-		RulesMACAddrList="$macaddrlist"
-	else
-		RulesMACAddrList="$RulesMACAddrList $macaddrlist"
+	if [ -n "$macaddrlist" ]; then
+		if [ -z "$RulesMACAddrList" ]; then
+			RulesMACAddrList="$macaddrlist"
+		else
+			RulesMACAddrList="$RulesMACAddrList $macaddrlist"
+		fi
 	fi
 
 	weekdays=$(echo "$weekdays" | sed 's/ /,/g')
@@ -172,7 +174,9 @@ add_controlRules() {
 add_rejectRule() {
 	local rejectInterface=$(config_n_get "$CONF" "config" "rejectInterface")
 
-	RulesMACAddrList=$(echo $RulesMACAddrList | tr ' ' '\n' | awk '!a[$0]++' | tr '\n' ' ')
+	if [ -n "$RulesMACAddrList" ]; then
+		RulesMACAddrList=$(echo $RulesMACAddrList | tr ' ' '\n' | awk '!a[$0]++' | tr '\n' ' ')
+	fi
 
 	local ether_saddr_param iifname_param
 	if [ -z "$FW4" ]; then
