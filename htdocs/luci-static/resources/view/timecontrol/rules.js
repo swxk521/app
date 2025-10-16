@@ -10,13 +10,18 @@
 
 function rule_macaddrlist_txt(s, hosts) {
 	var result = uci.get('timecontrol', s, 'macaddrlist');
+	var controlType = uci.get('timecontrol', 'config', 'controlType') || '0';
 	if (typeof result === 'string') {
 		result = result.toUpperCase();
 	} else if (Array.isArray(result)) {
 		result = result.map(item => typeof item === 'string' ? item.toUpperCase() : item);
 	}
 	if (result === null || result === undefined || (typeof result === 'string' && result.trim() === '')) {
-		result = _('AllClients');
+		if (controlType === '0') {
+			result = _('AllClients');
+		} else {
+			result = _('unspecified');
+		}
 	}
 	var items = fwtool.map_invert(result);
 	return fwtool.fmt(_('%{macaddrlist}'), {
@@ -31,7 +36,23 @@ function rule_timerangelist_txt(s) {
 		if (controlType === '0') {
 			result = _('AnyTime');
 		} else {
-			result = _('unspecified');
+			var weekdays = uci.get('timecontrol', s, 'weekdays');
+			if (weekdays === null || weekdays === undefined || (typeof weekdays === 'string' && weekdays.trim() === '')) {
+				result = _('unspecified');
+			} else if (typeof weekdays === 'string') {
+				const days = weekdays.trim().split(/\s+/);
+				if (days.length === 7) {
+					result = _('unspecified');
+				} else {
+					result = _('AnyTime');
+				}
+			} else if (Array.isArray(weekdays)) {
+				if (weekdays.length === 7) {
+					result = _('unspecified');
+				} else {
+					result = _('AnyTime');
+				}
+			}
 		}
 	} else if (Array.isArray(result) && result.indexOf('00:00:00-23:59:59') >= 0) {
 		result = _('AnyTime');
@@ -45,7 +66,7 @@ function rule_timerangelist_txt(s) {
 
 function rule_availableDuration_txt(s) {
 	var result = uci.get('timecontrol', s, 'timerangelist');
-	var duration = getAvailableDuration(result);
+	var duration = getAvailableDuration(result, s);
 	return fwtool.fmt(_('%{duration#%{next? }<var>%{item.ival}</var>}'), {
 		duration: fwtool.map_invert(duration + ' ' + _('(minutes)'))
 	});
@@ -243,13 +264,29 @@ function getRangeSec(str) {
 	return [parseTime(start), parseTime(end)];
 }
 
-function getAvailableDuration(timeRanges) {
+function getAvailableDuration(timeRanges, s) {
 	var controlType = uci.get('timecontrol', 'config', 'controlType') || '0';
 	if (timeRanges === null || timeRanges === undefined || (typeof timeRanges === 'string' && timeRanges.trim() === '')) {
 		if (controlType === '0') {
 			return 0;
 		} else {
-			return 1440;
+			var weekdays = uci.get('timecontrol', s, 'weekdays');
+			if (weekdays === null || weekdays === undefined || (typeof weekdays === 'string' && weekdays.trim() === '')) {
+				return 1440;
+			} else if (typeof weekdays === 'string') {
+				const days = weekdays.trim().split(/\s+/);
+				if (days.length === 7) {
+					return 1440;
+				} else {
+					return 0;
+				}
+			} else if (Array.isArray(weekdays)) {
+				if (weekdays.length === 7) {
+					return 1440;
+				} else {
+					return 0;
+				}
+			}
 		}
 	} else if (Array.isArray(timeRanges) && (timeRanges.indexOf('00:00:00-23:59:59') >= 0) || (timeRanges.length === 0)) {
 		return 0;
@@ -562,8 +599,7 @@ return view.extend({
 			return this.super('write', [section_id, L.toArray(value).join(' ')]);
 		};
 
-		o = s.taboption('timed', form.DynamicList, 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59' + '<br>' +
-			_('Tips') + ': ' + _('Control Type') + '=' + _('Blacklist') + '<br>' + _('When the value is null or empty, the default range is') + ': 00:00:00-23:59:59');
+		o = s.taboption('timed', form.DynamicList, 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59');
 		o.modalonly = true;
 		//o.default = '00:00:00-23:59:59';
 		o.placeholder = 'hh:mm:ss-hh:mm:ss';

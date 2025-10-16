@@ -79,7 +79,7 @@ add_controlRules() {
 		fi
 	fi
 
-	if [ $unblockDuration -gt 0 ] || ([ $TIMECONTROL_TYPE -ne 0 ] && [ -z "$timerangelist" ]); then
+	if [ $unblockDuration -gt 0 ]; then
 		return 0
 	fi
 
@@ -87,6 +87,10 @@ add_controlRules() {
 	local days
 	if [ "$weekdays" != "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday" ]; then
 		days="$weekdays"
+	fi
+
+	if [ $TIMECONTROL_TYPE -ne 0 ] && [ -z "$timerangelist" ] && [ -z "$days" ]; then
+		return 0
 	fi
 
 	if [ -z "$FW4" ]; then
