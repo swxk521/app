@@ -1,0 +1,77 @@
+name: Build-luci-app-timecontrol
+
+on: [push]
+
+env:
+  TZ: Asia/Shanghai
+permissions:
+  contents: write
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}-${{ matrix.sdk }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - aarch64_generic
+        sdk:
+          - openwrt-22.03
+          - master
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Set current date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Get latest commit message
+        id: get_commit
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=format:%s)
+          echo "commit_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
+          echo "Latest commit: $COMMIT_MSG"
+
+      - name: Building packages
+        uses: sbwml/openwrt-gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.arch }}-${{ matrix.sdk }}
+          FEEDNAME: packages_ci
+          PACKAGES: luci-app-timecontrol
+          NO_REFRESH_CHECK: true
+          V: s
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.arch }}-${{ matrix.sdk }}
+          path: bin/packages/${{ matrix.arch }}/packages_ci/
+
+      - name: Create compress files
+        run: |
+          zip -j Luci-app-timecontrol-${{ matrix.sdk }}.zip bin/packages/${{ matrix.arch }}/packages_ci/*
+     
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+            token: ${{ secrets.GITHUB_TOKEN }}
+            body: |
+
+             ### 更新日志：
+             
+             ${{ steps.get_commit.outputs.commit_msg }}
+
+             #### 注：
+             
+             - **`Luci-app-timecontrol-openwrt-22.03.zip`** --> ipk安装包
+             - **`Luci-app-timecontrol-master.zip`** --> apk安装包
+
+             - **`*.apk` 跳过证书安装命令** 
+             `apk add --allow-untrusted luci-app-timecontrol.apk`
+          
+            tag_name: ${{ steps.date.outputs.date }}
+            files: Luci-app-timecontrol-${{ matrix.sdk }}.zip
+ 
