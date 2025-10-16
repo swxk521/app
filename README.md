@@ -1,9 +1,7 @@
 # luci-app-timecontrol
 
 ![GitHub all releases](https://img.shields.io/github/downloads/gaobin89/luci-app-timecontrol/total?style=for-the-badge)
-![GitHub forks](https://img.shields.io/github/forks/gaobin89/luci-app-timecontrol?style=for-the-badge)
 ![GitHub stars](https://img.shields.io/github/stars/gaobin89/luci-app-timecontrol?style=for-the-badge)
-![GitHub watchers](https://img.shields.io/github/watchers/gaobin89/luci-app-timecontrol?style=for-the-badge)
 
 
 - lua版：在[Lienol luci-app-timecontrol](https://github.com/Lienol/openwrt-package/tree/main/luci-app-timecontrol)基础上修改而来，目前已弃用。
@@ -62,7 +60,7 @@
 ### 8. 管控类型
 - 支持黑/白名单切换
 - 默认为：黑名单
-- 白名单类型下支持指定拒绝接口，默认为空（即：拒绝所有接口）
+- 白名单类型下支持指定拒绝接口，默认为空（即：拒绝所有接口）；Docker等使用NAT转发的，请排除相应接口或添加MAC地址到白名单
 
 ## 界面
 <img width="1920" height="1020" alt="image" src="https://github.com/user-attachments/assets/2e86b688-076c-4142-9bb9-81d10a10b7c5" />

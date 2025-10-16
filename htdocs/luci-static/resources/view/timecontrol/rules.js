@@ -26,8 +26,13 @@ function rule_macaddrlist_txt(s, hosts) {
 
 function rule_timerangelist_txt(s) {
 	var result = uci.get('timecontrol', s, 'timerangelist');
+	var controlType = uci.get('timecontrol', 'config', 'controlType') || '0';
 	if (result === null || result === undefined || (typeof result === 'string' && result.trim() === '')) {
-		result = _('AnyTime');
+		if (controlType === '0') {
+			result = _('AnyTime');
+		} else {
+			result = _('unspecified');
+		}
 	} else if (Array.isArray(result) && result.indexOf('00:00:00-23:59:59') >= 0) {
 		result = _('AnyTime');
 	}
@@ -190,13 +195,12 @@ function getFirewallChainStatus() {
 	});
 }
 
-var href = L.hasSystemFeature('firewall4') ? '/cgi-bin/luci/admin/status/nftables' : '/cgi-bin/luci/admin/status/iptables';
-
 function renderStatus(res) {
 	var spanTemp = '<em><span style="color:%s"><strong>%s%s</strong></span>\t\t<strong>|</strong>\t\t<a href="%s" style="color:%s;"><strong>%s: %d</strong></a></em>';
 	var statusColor = res.exists ? '#059669' : 'red';
 	var statusText = res.exists ? _('Enabled') : _('Disabled');
 	var ruleCountColor = res.ruleCount > 0 ? '#059669' : '#f59e0b';
+	var href = L.hasSystemFeature('firewall4') ? '/cgi-bin/luci/admin/status/nftables' : '/cgi-bin/luci/admin/status/iptables';
 	var renderHTML = String.format(spanTemp, statusColor, _('Control'), statusText, href, ruleCountColor, _('Control Rules'), res.ruleCount);
 	return renderHTML;
 }
@@ -240,8 +244,13 @@ function getRangeSec(str) {
 }
 
 function getAvailableDuration(timeRanges) {
+	var controlType = uci.get('timecontrol', 'config', 'controlType') || '0';
 	if (timeRanges === null || timeRanges === undefined || (typeof timeRanges === 'string' && timeRanges.trim() === '')) {
-		return 0;
+		if (controlType === '0') {
+			return 0;
+		} else {
+			return 1440;
+		}
 	} else if (Array.isArray(timeRanges) && (timeRanges.indexOf('00:00:00-23:59:59') >= 0) || (timeRanges.length === 0)) {
 		return 0;
 	}
@@ -553,8 +562,8 @@ return view.extend({
 			return this.super('write', [section_id, L.toArray(value).join(' ')]);
 		};
 
-		o = s.taboption('timed', form.DynamicList, 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59'
-			+ '<br>' + _('Tips') + ': ' + _('When the value is null or empty, the default range is') + ' 00:00:00-23:59:59');
+		o = s.taboption('timed', form.DynamicList, 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59' + '<br>' +
+			_('Tips') + ': ' + _('Control Type') + '=' + _('Blacklist') + '<br>' + _('When the value is null or empty, the default range is') + ': 00:00:00-23:59:59');
 		o.modalonly = true;
 		//o.default = '00:00:00-23:59:59';
 		o.placeholder = 'hh:mm:ss-hh:mm:ss';

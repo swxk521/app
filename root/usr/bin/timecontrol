@@ -24,8 +24,9 @@ config_n_get() {
 convert_timeToUTC() {
 	local input_time="$1"
 	local current_time=$(date +%Y-%m-%d)
-	local system_timezone=$(config_n_get "system" "@system[-1]" "timezone" "UTC")
-	local timestamp=$(TZ=$system_timezone date -d "$current_time $input_time" +%s 2>/dev/null)
+	#local system_timezone=$(config_n_get "system" "@system[-1]" "timezone" "UTC")
+	#local timestamp=$(TZ=$system_timezone date -d "$current_time $input_time" +%s 2>/dev/null)
+	local timestamp=$(date -d "$current_time $input_time" +%s 2>/dev/null)
 	local utc_time=$(TZ=UTC date -d @$timestamp +%H:%M:%S)
 	echo $utc_time
 }
@@ -61,12 +62,12 @@ load_config() {
 add_controlRules() {
 	local enable=$(config_n_get "$CONF" "$1" "enable" 0)
 	local macaddrlist=$(config_n_get "$CONF" "$1" "macaddrlist")
-	local timerangelist=$(config_n_get "$CONF" "$1" "timerangelist" "00:00:00-23:59:59")
-	local weekdays=$(config_n_get "$CONF" "$1" "weekdays" "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday")
+	local timerangelist=$(config_n_get "$CONF" "$1" "timerangelist")
+	local weekdays=$(config_n_get "$CONF" "$1" "weekdays")
 	local unblockDuration=$(config_n_get "$CONF" "$1" "unblockDuration" 0)
 	local interface=$(config_n_get "$CONF" "$1" "interface")
 
-	if [ $enable -ne 1 ] || [ $unblockDuration -gt 0 ]; then
+	if [ $enable -ne 1 ]; then
 		return 0
 	fi
 
@@ -78,7 +79,15 @@ add_controlRules() {
 		fi
 	fi
 
+	if [ $unblockDuration -gt 0 ] || ([ $TIMECONTROL_TYPE -ne 0 ] && [ -z "$timerangelist" ]); then
+		return 0
+	fi
+
 	weekdays=$(echo "$weekdays" | sed 's/ /,/g')
+	local days
+	if [ "$weekdays" != "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday" ]; then
+		days="$weekdays"
+	fi
 
 	if [ -z "$FW4" ]; then
 		local chain target
@@ -96,9 +105,23 @@ add_controlRules() {
 			ether_saddr_param="-m set --match-set ${CONF}_maclist_$1 src"
 		fi
 
+		local weekdays_param
+		if [ -n "$days" ]; then
+			weekdays_param="--weekdays "$days""
+		fi
+
+		if [ -z "$timerangelist" ]; then
+			timerangelist="00:00:00-23:59:59"
+		fi
+
 		for timerange in $timerangelist; do
 			timeon=$(echo "$timerange" | awk -F '-' '{print $1}')
 			timeoff=$(echo "$timerange" | awk -F '-' '{print $2}')
+
+			local time_param
+			if [ -n "$timeon" ] && [ -n "$timeoff" ]; then
+				time_param="--timestart $timeon --timestop $timeoff"
+			fi
 
 			for table in filter nat; do
 				case $table in
@@ -112,9 +135,10 @@ add_controlRules() {
 					;;
 				*) ;;
 				esac
-				iptables_w -t $table -A $chain $iifname_param $ether_saddr_param -m time --kerneltz --timestart $timeon --timestop $timeoff --weekdays "$weekdays" -j $target -m comment --comment "!fw3: Time control"
+				iptables_w -t $table -A $chain $iifname_param $ether_saddr_param -m time --kerneltz $time_param $weekdays_param -j $target -m comment --comment "!fw3: Time control"
 			done
 		done
+
 	else
 		local ether_saddr_param
 		if [ -n "$macaddrlist" ]; then
@@ -122,14 +146,10 @@ add_controlRules() {
 			ether_saddr_param="ether saddr { ${macaddr} } "
 		fi
 
-		local meta_hour_param timeranges
-		echo "$timerangelist" | grep -q "00:00:00-23:59:59"
-		if [ $? -ne 0 ]; then
-			timeranges="$timerangelist"
-		fi
-		if [ -n "$timeranges" ]; then
+		local meta_hour_param
+		if [ -n "$timerangelist" ]; then
 			local utc_timeranges
-			for timerange in $timeranges; do
+			for timerange in $timerangelist; do
 				if [ -z "$utc_timeranges" ]; then
 					utc_timeranges="$(get_UTC_timerange "$timerange")"
 				else
@@ -139,10 +159,7 @@ add_controlRules() {
 			meta_hour_param="meta hour { ${utc_timeranges} } "
 		fi
 
-		local meta_day_param days
-		if [ "$weekdays" != "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday" ]; then
-			days="$weekdays"
-		fi
+		local meta_day_param
 		if [ -n "$days" ]; then
 			meta_day_param="meta day { ${days} } "
 		fi
