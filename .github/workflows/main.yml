@@ -28,12 +28,40 @@ jobs:
         id: date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-      - name: Get latest commit message
-        id: get_commit
+      - name: Get all commit messages
+        id: get_commits
         run: |
-          COMMIT_MSG=$(git log -1 --pretty=format:%s)
-          echo "commit_msg=$COMMIT_MSG" >> $GITHUB_OUTPUT
-          echo "Latest commit: $COMMIT_MSG"
+          set -eu
+
+          if [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            git log --pretty=format:'%s' ${{ github.event.before }}..${{ github.sha }} > commits.txt || true
+          else
+            git log -1 --pretty=format:'%s' > commits.txt || true
+          fi
+
+          # 保证文件末尾有换行，避免 here-doc 结束符粘到最后一行
+          if [ -f commits.txt ] && [ -s commits.txt ]; then
+            printf '\n' >> commits.txt
+          fi
+          
+          # 将每一条非空行前面加上 "- " 以符合 markdown 列表格式
+          if [ -f commits.txt ]; then
+            awk 'NF { print "- " $0 }' commits.txt > commits_md.txt || true
+          fi
+
+          # 使用唯一分隔符写入 GITHUB_OUTPUT（确保开始/结束分隔符在独立行）
+          DELIM="END_OF_COMMIT_MSGS_$(date +%s%N)"
+          printf 'commit_msgs<<%s\n' "$DELIM" >> "$GITHUB_OUTPUT"
+          # 如果 commits_md.txt 为空，下面 cat 不会输出内容，但结束分隔符仍然写入，符合多行输出格式
+          cat commits_md.txt >> "$GITHUB_OUTPUT" || true
+          printf '%s\n' "$DELIM" >> "$GITHUB_OUTPUT"
+
+          echo "Found commits:"
+          if [ -s commits.txt ]; then
+            cat commits.txt
+          else
+            echo "(no commits found)"
+          fi
 
       - name: Building packages
         uses: sbwml/openwrt-gh-action-sdk@main
@@ -62,7 +90,7 @@ jobs:
 
              ### 更新日志：
              
-             ${{ steps.get_commit.outputs.commit_msg }}
+             ${{ steps.get_commits.outputs.commit_msgs }}
 
              #### 注：
              
