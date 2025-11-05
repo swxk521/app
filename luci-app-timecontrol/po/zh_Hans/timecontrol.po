@@ -110,9 +110,6 @@ msgstr "要绑定的网络接口（如：eth0）"
 msgid "Tips"
 msgstr "提示"
 
-msgid "When the value is null or empty, the default range is"
-msgstr "当值为空时，默认值为"
-
 msgid "Control Type"
 msgstr "管控类型"
 

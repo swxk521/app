@@ -470,7 +470,11 @@ return view.extend({
 		s.tab('timed', _('Time Restrictions'));
 
 		s.sectiontitle = function (section_id) {
-			return uci.get('timecontrol', section_id, 'name') || _('Unnamed rule');
+			var ruleName = uci.get('timecontrol', section_id, 'name');
+			if (ruleName === null || ruleName === undefined || (typeof ruleName === 'string' && ruleName.trim() === '')) {
+				return _('Unnamed rule') + ' (' + section_id + ')';
+			}
+			return ruleName + ' (' + section_id + ')';
 		};
 
 		o = s.option(form.Flag, 'enable', _('Enable'));
@@ -533,6 +537,10 @@ return view.extend({
 		o = s.taboption('general', form.Value, 'name', _('Name'));
 		o.placeholder = _('Unnamed rule');
 		o.modalonly = true;
+
+		o.write = function (section_id, value) {
+			return this.super('write', [section_id, value.trim()]);
+		};
 
 		o = s.taboption('general', widgets.DeviceSelect, 'interface', _('Interface'), _('Network interface to bind (eg: eth0)'));
 		o.nocreate = true;
