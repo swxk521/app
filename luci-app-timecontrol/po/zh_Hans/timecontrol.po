@@ -14,7 +14,7 @@ msgstr "管控"
 msgid "Internet Time Control"
 msgstr "上网时间控制"
 
-msgid "Enabled"
+msgid "Enable"
 msgstr "启用"
 
 msgid "Control Rules"
@@ -53,11 +53,11 @@ msgstr "星期日"
 msgid "Week Days"
 msgstr "星期"
 
-msgid "Enabled"
-msgstr "已开启"
+msgid "Control Enabled"
+msgstr "管控已开启"
 
-msgid "Disabled"
-msgstr "已禁用"
+msgid "Control Disabled"
+msgstr "管控已禁用"
 
 msgid "Invalid time range"
 msgstr "时段无效"
@@ -67,6 +67,12 @@ msgstr "用户可以通过 MAC 地址限制互联网使用时间，支持 iptabl
 
 msgid "Temporary Unblock"
 msgstr "临时解禁"
+
+msgid "Temporary Block"
+msgstr "临时封禁"
+
+msgid "Temporary Unblock/Block"
+msgstr "临时解/封禁"
 
 msgid "(minutes)"
 msgstr "(分钟)"
@@ -87,13 +93,19 @@ msgid "Collecting data ..."
 msgstr "收集数据中 ..."
 
 msgid "Global Settings"
-msgstr "全局设备"
+msgstr "全局设置"
+
+msgid "Quick Settings"
+msgstr "快速设置"
 
 msgid "Suggestion and feedback"
 msgstr "建议与反馈"
 
 msgid "Set unblock duration for all rules"
 msgstr "为所有规则设置临时解禁时间"
+
+msgid "Set block duration for all rules"
+msgstr "为所有规则设置临时封禁时间"
 
 msgid "Example"
 msgstr "例如"
@@ -103,9 +115,6 @@ msgstr "时间范围重叠"
 
 msgid "Available Duration"
 msgstr "可用时长"
-
-msgid "Network interface to bind (eg: eth0)"
-msgstr "要绑定的网络接口（如：eth0）"
 
 msgid "Tips"
 msgstr "提示"
@@ -133,3 +142,15 @@ msgstr "拒绝接口"
 
 msgid "This option is valid only when the whitelist is selected"
 msgstr "此选项仅在选择白名单时有效"
+
+msgid "Temporary Control"
+msgstr "临时管控"
+
+msgid "Temporary Duration"
+msgstr "临时时长"
+
+msgid "Other Settings"
+msgstr "其它设置"
+
+msgid "When the temporary duration timer ends, it will automatically take effect according to the original rules"
+msgstr "当临时时长计时结束后，自动按原规则生效"

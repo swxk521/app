@@ -82,14 +82,23 @@ function rule_Interface_txt(s) {
 	});
 }
 
-function rule_unblockDuration_txt(s) {
-	var result = uci.get('timecontrol', s, 'unblockDuration');
+function rule_temporaryDuration_txt(s) {
+	var result = uci.get('timecontrol', s, 'temporaryDuration');
 	if (result === null || result === undefined || (typeof result === 'string' && result.trim() === '')) {
 		result = '0';
 	}
-	return fwtool.fmt(_('%{unblockDuration#%{next? }<var>%{item.ival}</var>}'), {
-		unblockDuration: fwtool.map_invert(result + ' ' + _('(minutes)'))
-	});
+	var controlType = uci.get('timecontrol', s, 'temporaryControl') || 0;
+	var statusColor = controlType === '0' ? '#f59e0b' : 'red';
+	var tooltipText = controlType === '0' ? _('Temporary Unblock') : _('Temporary Block');
+	if (result === '0') {
+		return fwtool.fmt(_('%{temporaryDuration#%{next? }<var>%{item.ival}</var>}'), {
+			temporaryDuration: fwtool.map_invert(result + ' ' + _('(minutes)'))
+		});
+	} else {
+		var spanTemp = '<var><span style="color:%s" data-tooltip="%s">%s</span></var>';
+		var renderHTML = String.format(spanTemp, statusColor, tooltipText, result + ' ' + _('(minutes)'));
+		return renderHTML;
+	}
 }
 
 function rule_weekdays_txt(s) {
@@ -217,12 +226,12 @@ function getFirewallChainStatus() {
 }
 
 function renderStatus(res) {
-	var spanTemp = '<em><span style="color:%s"><strong>%s%s</strong></span>\t\t<strong>|</strong>\t\t<a href="%s" style="color:%s;"><strong>%s: %d</strong></a></em>';
+	var spanTemp = '<em><span style="color:%s"><strong>%s</strong></span>\t\t<strong>|</strong>\t\t<a href="%s" style="color:%s;"><strong>%s: %d</strong></a></em>';
 	var statusColor = res.exists ? '#059669' : 'red';
-	var statusText = res.exists ? _('Enabled') : _('Disabled');
+	var statusText = res.exists ? _('Control Enabled') : _('Control Disabled');
 	var ruleCountColor = res.ruleCount > 0 ? '#059669' : '#f59e0b';
 	var href = L.hasSystemFeature('firewall4') ? '/cgi-bin/luci/admin/status/nftables' : '/cgi-bin/luci/admin/status/iptables';
-	var renderHTML = String.format(spanTemp, statusColor, _('Control'), statusText, href, ruleCountColor, _('Control Rules'), res.ruleCount);
+	var renderHTML = String.format(spanTemp, statusColor, statusText, href, ruleCountColor, _('Control Rules'), res.ruleCount);
 	return renderHTML;
 }
 
@@ -390,8 +399,13 @@ return view.extend({
 		};
 
 		s = m.section(form.NamedSection, 'config', _('Global Settings'));
+		s.anonymous = true
+		s.addremove = false
 
-		o = s.option(form.Flag, 'enable', _('Enable'));
+		s.tab('global', _('Global Settings'));
+		s.tab('quick', _('Quick Settings'));
+
+		o = s.taboption('global', form.Flag, 'enable', _('Enable'));
 		o.default = o.disabled;
 		o.rmempty = false;
 
@@ -399,9 +413,30 @@ return view.extend({
 			this.map.save(null, true);
 		};
 
-		o = s.option(form.Value, 'unblockDuration', _('Temporary Unblock'), _('Set unblock duration for all rules'));
+		o = s.taboption('global', form.RichListValue, 'controlType', _('Control Type'), _('Set control type to blacklist or whitelist'));
 		o.modalonly = true;
-		//o.depends('enable', '1');
+		o.default = '0';
+		o.value('0', _('Blacklist'), _('Blocks network access only from blacklisted addresses'));
+		o.value('1', _('Whitelist'), _('Allow network access only from whitelisted addresses'));
+
+		o.handleValueChange = function (section_id, state, ev) {
+			this.map.save(null, true);
+		};
+
+		o = s.taboption('global', widgets.DeviceSelect, 'rejectInterface', _('Reject Interface'), _('Tips') + ': ' + _('This option is valid only when the whitelist is selected'));
+		o.depends('controlType', '1');
+		o.nocreate = true;
+		o.modalonly = true;
+		o.unspecified = true;
+		o.multiple = true;
+
+		o.handleValueChange = function (section_id, state, ev) {
+			uci.set('timecontrol', section_id, 'rejectInterface', ev.target.value);
+			uci.save();
+		};
+
+		o = s.taboption('quick', form.Value, 'blockDuration', _('Temporary Block'), _('Set block duration for all rules'));
+		o.modalonly = true;
 		o.datatype = 'range(0,720)';
 
 		for (var i = 0; i <= 5; i++) {
@@ -429,7 +464,8 @@ return view.extend({
 			}
 			sections.forEach(element => {
 				var sectionId = element['.name'];
-				uci.set('timecontrol', sectionId, 'unblockDuration', value);
+				uci.set('timecontrol', sectionId, 'temporaryControl', 1);
+				uci.set('timecontrol', sectionId, 'temporaryDuration', value);
 			});
 			this.map.save(null, true);
 			this.default = null;
@@ -437,27 +473,41 @@ return view.extend({
 			//location.reload();
 		};
 
-		o = s.option(form.RichListValue, 'controlType', _('Control Type'), _('Set control type to blacklist or whitelist'));
+		o = s.taboption('quick', form.Value, 'unblockDuration', _('Temporary Unblock'), _('Set unblock duration for all rules'));
 		o.modalonly = true;
-		o.default = '0';
-		o.value('0', _('Blacklist'), _('Blocks network access only from blacklisted addresses'));
-		o.value('1', _('Whitelist'), _('Allow network access only from whitelisted addresses'));
+		o.datatype = 'range(0,720)';
 
-		o.handleValueChange = function (section_id, state, ev) {
-			this.map.save(null, true);
+		for (var i = 0; i <= 5; i++) {
+			o.value(i * 5, i * 5 + ' ' + _('(minutes)'));
+		}
+		for (var i = 1; i <= 4; i++) {
+			o.value(i * 30, i * 30 + ' ' + _('(minutes)'));
+		}
+		for (var i = 3; i <= 12; i++) {
+			o.value(i * 60, i * 60 + ' ' + _('(minutes)'));
+		}
+
+		o.write = function (section_id, value) {
+			return true;
 		};
 
-		o = s.option(widgets.DeviceSelect, 'rejectInterface', _('Reject Interface'), _('Network interface to bind (eg: eth0)')
-			+ '<br>' + _('Tips') + ': ' + _('This option is valid only when the whitelist is selected'));
-		o.depends('controlType', '1');
-		o.nocreate = true;
-		o.modalonly = true;
-		o.unspecified = true;
-		o.multiple = true;
-
 		o.handleValueChange = function (section_id, state, ev) {
-			uci.set('timecontrol', section_id, 'rejectInterface', ev.target.value);
-			uci.save();
+			if (ev.target.value === null || ev.target.value.trim() === '') {
+				return;
+			}
+			var value = ev.target.value.trim() === '0' ? null : ev.target.value;
+			var sections = getUciSections('rule');
+			if (sections.length === 0) {
+				return;
+			}
+			sections.forEach(element => {
+				var sectionId = element['.name'];
+				uci.set('timecontrol', sectionId, 'temporaryControl', 0);
+				uci.set('timecontrol', sectionId, 'temporaryDuration', value);
+			});
+			this.map.save(null, true);
+			this.default = null;
+			this.map.reset();
 		};
 
 		s = m.section(form.GridSection, 'rule', _('Control Rules'));
@@ -468,6 +518,7 @@ return view.extend({
 
 		s.tab('general', _('General Settings'));
 		s.tab('timed', _('Time Restrictions'));
+		s.tab('other', _('Other Settings'));
 
 		s.sectiontitle = function (section_id) {
 			var ruleName = uci.get('timecontrol', section_id, 'name');
@@ -487,11 +538,11 @@ return view.extend({
 			return this.map.save(null, true);
 		};
 
-		o = s.option(form.Value, '', _('Temporary Unblock'));
+		o = s.option(form.Value, '', _('Temporary Unblock/Block'));
 		o.modalonly = false;
 
 		o.textvalue = function (s) {
-			return rule_unblockDuration_txt(s);
+			return rule_temporaryDuration_txt(s);
 		};
 
 		o = s.option(form.Value, '', _('Client MAC'));
@@ -542,51 +593,10 @@ return view.extend({
 			return this.super('write', [section_id, value.trim()]);
 		};
 
-		o = s.taboption('general', widgets.DeviceSelect, 'interface', _('Interface'), _('Network interface to bind (eg: eth0)'));
+		o = s.taboption('general', widgets.DeviceSelect, 'interface', _('Interface'));
 		o.nocreate = true;
 		o.modalonly = true;
 		o.unspecified = true;
-
-		o = s.taboption('general', form.Value, 'unblockDuration', _('Temporary Unblock'));
-		o.modalonly = true;
-		//o.depends('enable', '1');
-		o.datatype = 'range(1,720)';
-		for (var i = 1; i <= 5; i++) {
-			o.value(i * 5, i * 5 + ' ' + _('(minutes)'));
-		}
-		for (var i = 1; i <= 4; i++) {
-			o.value(i * 30, i * 30 + ' ' + _('(minutes)'));
-		}
-		for (var i = 3; i <= 12; i++) {
-			o.value(i * 60, i * 60 + ' ' + _('(minutes)'));
-		}
-
-		o.cfgvalue = function (section_id) {
-			var value = uci.get('timecontrol', section_id, 'unblockDuration');
-			var unblockDuration = value == 0 ? null : value;
-			if (this.keylist.indexOf(unblockDuration) < 0 && (typeof unblockDuration === 'string' && unblockDuration.trim() !== '')) {
-				this.value(unblockDuration, unblockDuration + ' ' + _('(minutes)'));
-				sortList(this);
-			}
-			return unblockDuration;
-		};
-
-		o.renderWidget = function (section_id, option_index, cfgvalue) {
-			const value = (cfgvalue != null) ? cfgvalue : this.default;
-			const choices = this.transformChoices();
-			const placeholder = (this.optional || this.rmempty) ? E('em', _('unspecified')) : _('-- Please choose --');
-			let widget = new ui.Combobox(Array.isArray(value) ? value.join(' ') : value, choices, {
-				id: this.cbid(section_id),
-				sort: this.keylist,
-				optional: this.optional || this.rmempty,
-				datatype: this.datatype,
-				select_placeholder: this.placeholder ?? placeholder,
-				validate: L.bind(this.validate, this, section_id),
-				disabled: (this.readonly != null) ? this.readonly : this.map.readonly,
-				create_markup: '<li data-value="{{value}}">' + '{{value}}' + ' ' + _('(minutes)') + '</span>' + '</li>'
-			});
-			return widget.render();
-		};
 
 		fwtool.addMACOption(s, 'general', 'macaddrlist', _('Client MAC'), null, hosts);
 
@@ -656,6 +666,53 @@ return view.extend({
 			}
 
 			return true;
+		};
+
+		o = s.taboption('other', form.ListValue, 'temporaryControl', _('Temporary Control'));
+		o.modalonly = true;
+		o.value('0', _('Temporary Unblock'));
+		o.value('1', _('Temporary Block'));
+
+		o = s.taboption('other', form.Value, 'temporaryDuration', _('Temporary Duration'),
+			_('When the temporary duration timer ends, it will automatically take effect according to the original rules'));
+		o.modalonly = true;
+		//o.depends('enable', '1');
+		o.datatype = 'range(1,720)';
+		for (var i = 1; i <= 5; i++) {
+			o.value(i * 5, i * 5 + ' ' + _('(minutes)'));
+		}
+		for (var i = 1; i <= 4; i++) {
+			o.value(i * 30, i * 30 + ' ' + _('(minutes)'));
+		}
+		for (var i = 3; i <= 12; i++) {
+			o.value(i * 60, i * 60 + ' ' + _('(minutes)'));
+		}
+
+		o.cfgvalue = function (section_id) {
+			var value = uci.get('timecontrol', section_id, 'temporaryDuration');
+			var temporaryDuration = value == 0 ? null : value;
+			if (this.keylist.indexOf(temporaryDuration) < 0 && (typeof temporaryDuration === 'string' && temporaryDuration.trim() !== '')) {
+				this.value(temporaryDuration, temporaryDuration + ' ' + _('(minutes)'));
+				sortList(this);
+			}
+			return temporaryDuration;
+		};
+
+		o.renderWidget = function (section_id, option_index, cfgvalue) {
+			const value = (cfgvalue != null) ? cfgvalue : this.default;
+			const choices = this.transformChoices();
+			const placeholder = (this.optional || this.rmempty) ? E('em', _('unspecified')) : _('-- Please choose --');
+			let widget = new ui.Combobox(Array.isArray(value) ? value.join(' ') : value, choices, {
+				id: this.cbid(section_id),
+				sort: this.keylist,
+				optional: this.optional || this.rmempty,
+				datatype: this.datatype,
+				select_placeholder: this.placeholder ?? placeholder,
+				validate: L.bind(this.validate, this, section_id),
+				disabled: (this.readonly != null) ? this.readonly : this.map.readonly,
+				create_markup: '<li data-value="{{value}}">' + '{{value}}' + ' ' + _('(minutes)') + '</span>' + '</li>'
+			});
+			return widget.render();
 		};
 
 		return m.render();
