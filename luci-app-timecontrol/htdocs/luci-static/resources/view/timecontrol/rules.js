@@ -420,7 +420,9 @@ return view.extend({
 		o.value('1', _('Whitelist'), _('Allow network access only from whitelisted addresses'));
 
 		o.handleValueChange = function (section_id, state, ev) {
-			this.map.save(null, true);
+			if (ev.target.value !== this.data.config) {
+				this.map.save(null, true);
+			}
 		};
 
 		o = s.taboption('global', widgets.DeviceSelect, 'rejectInterface', _('Reject Interface'), _('Tips') + ': ' + _('This option is valid only when the whitelist is selected'));
