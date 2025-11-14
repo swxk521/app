@@ -296,9 +296,9 @@ Initialize() {
 	load_config
 
 	if [ -z "$FW4" ]; then
-		cleanup_ipset
 		set_iptablesChains
 		set_iptablesRules
+		cleanup_ipset
 	else
 		set_nftablesChains
 		set_nftablesRules

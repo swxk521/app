@@ -9,7 +9,7 @@ LUCI_TITLE:=LuCI support for Time Control (JavaScript)
 LUCI_PKGARCH:=all
 PKG_NAME:=luci-app-timecontrol
 PKG_VERSION:=2.3
-PKG_RELEASE:=20251113
+PKG_RELEASE:=20251114
 
 include $(TOPDIR)/feeds/luci/luci.mk
 
