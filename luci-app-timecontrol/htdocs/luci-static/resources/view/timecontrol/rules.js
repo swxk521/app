@@ -273,6 +273,42 @@ function getRangeSec(str) {
 	return [parseTime(start), parseTime(end)];
 }
 
+function validTimeRange(o, section_id, value) {
+	function isValidTimeRange(str) {
+		const [startSec, endSec] = getRangeSec(str);
+		return startSec !== null && endSec !== null && startSec < endSec;
+	}
+
+	if (!value) return true;
+
+	if (Array.isArray(value)) {
+		for (const v of value) {
+			if (!isValidTimeRange(v)) {
+				return _('Invalid time range') + ': ' + v;
+			}
+		}
+	} else if (typeof value === 'string') {
+		if (!isValidTimeRange(value)) {
+			return _('Invalid time range') + ': ' + value;
+		}
+	}
+
+	const [startSec, endSec] = getRangeSec(value);
+
+	let ranges = o.formvalue(section_id);
+	ranges = Array.isArray(ranges) ? ranges : (ranges ? [ranges] : []);
+
+	for (const r of ranges) {
+		if (r === value) continue;
+		const [rStart, rEnd] = getRangeSec(r);
+		if (!(endSec <= rStart || startSec >= rEnd)) {
+			return _('Time ranges overlap') + ': ' + value + ' --> ' + r;
+		}
+	}
+
+	return true;
+}
+
 function getAvailableDuration(timeRanges, s) {
 	var controlType = uci.get('timecontrol', 'config', 'controlType') || '0';
 	if (timeRanges === null || timeRanges === undefined || (typeof timeRanges === 'string' && timeRanges.trim() === '')) {
@@ -307,6 +343,64 @@ function getAvailableDuration(timeRanges, s) {
 		duration -= (rEnd - rStart);
 	}
 	return parseInt(duration / 60, 10);
+}
+
+function addTemporaryDurationOption(s, tab, name, label, description, startValue, endValue) {
+	var o = s.taboption(tab, form.Value, name, label, description);
+	o.modalonly = true;
+	o.datatype = 'range(' + startValue + ',' + endValue + ')';
+	for (var i = startValue; i <= 5; i++) {
+		o.value(i * 5, i * 5 + ' ' + _('(minutes)'));
+	}
+	for (var i = 1; i <= 4; i++) {
+		o.value(i * 30, i * 30 + ' ' + _('(minutes)'));
+	}
+	for (var i = 3; i <= 12; i++) {
+		o.value(i * 60, i * 60 + ' ' + _('(minutes)'));
+	}
+	return o;
+}
+
+function addWeekdayOption(s, tab, name, label, description) {
+	var o = s.taboption(tab, form.MultiValue, name, label, description);
+	o.modalonly = true;
+	o.multiple = true;
+	o.display = 5;
+	o.placeholder = _('AnyDay');
+	o.value('Sunday', _('Sunday'));
+	o.value('Monday', _('Monday'));
+	o.value('Tuesday', _('Tuesday'));
+	o.value('Wednesday', _('Wednesday'));
+	o.value('Thursday', _('Thursday'));
+	o.value('Friday', _('Friday'));
+	o.value('Saturday', _('Saturday'));
+
+	o.write = function (section_id, value) {
+		return this.super('write', [section_id, L.toArray(value).join(' ')]);
+	};
+	return o;
+}
+
+function addTimeRangeOption(s, tab, name, label, description) {
+	var o = s.taboption(tab, form.DynamicList, name, label, description);
+	o.modalonly = true;
+	//o.default = '00:00:00-23:59:59';
+	o.placeholder = 'hh:mm:ss-hh:mm:ss';
+
+	o.cfgvalue = function (section_id) {
+		var value = uci.get('timecontrol', section_id, name);
+		return sortTimeRanges(value);
+	};
+
+	o.write = function (section_id, value) {
+		let ranges = sortTimeRanges(value);
+		return this.super('write', [section_id, ranges]);
+	};
+
+	o.validate = function (section_id, value) {
+		return validTimeRange(this, section_id, value);
+	};
+	return o;
 }
 
 // 兼容性处理：如果 form.RichListValue 不存在则自定义
@@ -403,6 +497,7 @@ return view.extend({
 		s.addremove = false
 
 		s.tab('global', _('Global Settings'));
+		s.tab('restriction', _('Interface Restrictions'));
 		s.tab('quick', _('Quick Settings'));
 
 		o = s.taboption('global', form.Flag, 'enable', _('Enable'));
@@ -410,22 +505,23 @@ return view.extend({
 		o.rmempty = false;
 
 		o.handleValueChange = function (section_id, state, ev) {
-			this.map.save(null, true);
+			var value = this.formvalue(section_id);
+			uci.set('timecontrol', section_id, 'enable', value);
+			uci.save();
 		};
 
 		o = s.taboption('global', form.RichListValue, 'controlType', _('Control Type'), _('Set control type to blacklist or whitelist'));
 		o.modalonly = true;
 		o.default = '0';
 		o.value('0', _('Blacklist'), _('Blocks network access only from blacklisted addresses'));
-		o.value('1', _('Whitelist'), _('Allow network access only from whitelisted addresses'));
+		o.value('1', _('Whitelist'), _('Allow network access only from whitelisted addresses, for more settings go to \"Interface Restrictions\" tab'));
 
 		o.handleValueChange = function (section_id, state, ev) {
-			if (ev.target.value !== this.data.config) {
-				this.map.save(null, true);
-			}
+			uci.set('timecontrol', section_id, 'controlType', ev.target.value);
+			uci.save();
 		};
 
-		o = s.taboption('global', widgets.DeviceSelect, 'rejectInterface', _('Reject Interface'), _('Tips') + ': ' + _('This option is valid only when the whitelist is selected'));
+		o = s.taboption('restriction', widgets.DeviceSelect, 'rejectInterface', _('Interface'), _('The interface is only rejected in whitelist mode, unspecified means reject all interfaces'));
 		o.depends('controlType', '1');
 		o.nocreate = true;
 		o.modalonly = true;
@@ -437,19 +533,30 @@ return view.extend({
 			uci.save();
 		};
 
-		o = s.taboption('quick', form.Value, 'blockDuration', _('Temporary Block'), _('Set block duration for all rules'));
-		o.modalonly = true;
-		o.datatype = 'range(0,720)';
+		o = addWeekdayOption(s, 'restriction', 'weekdays', _('Week Days'));
+		o.depends('controlType', '1');
 
-		for (var i = 0; i <= 5; i++) {
-			o.value(i * 5, i * 5 + ' ' + _('(minutes)'));
-		}
-		for (var i = 1; i <= 4; i++) {
-			o.value(i * 30, i * 30 + ' ' + _('(minutes)'));
-		}
-		for (var i = 3; i <= 12; i++) {
-			o.value(i * 60, i * 60 + ' ' + _('(minutes)'));
-		}
+		o.handleValueChange = function (section_id, state, ev) {
+			uci.set('timecontrol', section_id, 'weekdays', ev.target.value);
+			uci.save();
+		};
+
+		o = addTimeRangeOption(s, 'restriction', 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59');
+		o.depends('controlType', '1');
+
+		o.handleValueChange = function (section_id, state, ev) {
+			var value = this.formvalue(section_id);
+			if (Array.isArray(value)) {
+				if (value.length === 0) {
+					uci.set('timecontrol', section_id, 'timerangelist', '');
+				} else {
+					uci.set('timecontrol', section_id, 'timerangelist', value);
+				}
+				uci.save();
+			};
+		};
+
+		o = addTemporaryDurationOption(s, 'quick', 'blockDuration', _('Temporary Block'), _('Set block duration for all rules'), 0, 720);
 
 		o.write = function (section_id, value) {
 			return true;
@@ -459,7 +566,6 @@ return view.extend({
 			if (ev.target.value === null || ev.target.value.trim() === '') {
 				return;
 			}
-			var value = ev.target.value.trim() === '0' ? null : ev.target.value;
 			var sections = getUciSections('rule');
 			if (sections.length === 0) {
 				return;
@@ -467,27 +573,14 @@ return view.extend({
 			sections.forEach(element => {
 				var sectionId = element['.name'];
 				uci.set('timecontrol', sectionId, 'temporaryControl', 1);
-				uci.set('timecontrol', sectionId, 'temporaryDuration', value);
+				uci.set('timecontrol', sectionId, 'temporaryDuration', ev.target.value);
 			});
 			this.map.save(null, true);
-			this.default = null;
-			this.map.reset();
+			//this.map.reset();
 			//location.reload();
 		};
 
-		o = s.taboption('quick', form.Value, 'unblockDuration', _('Temporary Unblock'), _('Set unblock duration for all rules'));
-		o.modalonly = true;
-		o.datatype = 'range(0,720)';
-
-		for (var i = 0; i <= 5; i++) {
-			o.value(i * 5, i * 5 + ' ' + _('(minutes)'));
-		}
-		for (var i = 1; i <= 4; i++) {
-			o.value(i * 30, i * 30 + ' ' + _('(minutes)'));
-		}
-		for (var i = 3; i <= 12; i++) {
-			o.value(i * 60, i * 60 + ' ' + _('(minutes)'));
-		}
+		o = addTemporaryDurationOption(s, 'quick', 'unblockDuration', _('Temporary Unblock'), _('Set unblock duration for all rules'), 0, 720);
 
 		o.write = function (section_id, value) {
 			return true;
@@ -497,7 +590,6 @@ return view.extend({
 			if (ev.target.value === null || ev.target.value.trim() === '') {
 				return;
 			}
-			var value = ev.target.value.trim() === '0' ? null : ev.target.value;
 			var sections = getUciSections('rule');
 			if (sections.length === 0) {
 				return;
@@ -505,11 +597,9 @@ return view.extend({
 			sections.forEach(element => {
 				var sectionId = element['.name'];
 				uci.set('timecontrol', sectionId, 'temporaryControl', 0);
-				uci.set('timecontrol', sectionId, 'temporaryDuration', value);
+				uci.set('timecontrol', sectionId, 'temporaryDuration', ev.target.value);
 			});
 			this.map.save(null, true);
-			this.default = null;
-			this.map.reset();
 		};
 
 		s = m.section(form.GridSection, 'rule', _('Control Rules'));
@@ -537,7 +627,9 @@ return view.extend({
 
 		o.handleValueChange = function (section_id, state, ev) {
 			//ui.changes.apply(true);
-			return this.map.save(null, true);
+			var value = this.formvalue(section_id);
+			uci.set('timecontrol', section_id, 'enable', value);
+			uci.save();
 		};
 
 		o = s.option(form.Value, '', _('Temporary Unblock/Block'));
@@ -602,93 +694,18 @@ return view.extend({
 
 		fwtool.addMACOption(s, 'general', 'macaddrlist', _('Client MAC'), null, hosts);
 
-		o = s.taboption('timed', form.MultiValue, 'weekdays', _('Week Days'));
+		addWeekdayOption(s, 'timed', 'weekdays', _('Week Days'));
+
+		addTimeRangeOption(s, 'timed', 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59');
+
+		o = s.taboption('other', form.RichListValue, 'temporaryControl', _('Temporary Control'));
 		o.modalonly = true;
-		o.multiple = true;
-		o.display = 5;
-		o.placeholder = _('AnyDay');
-		o.value('Sunday', _('Sunday'));
-		o.value('Monday', _('Monday'));
-		o.value('Tuesday', _('Tuesday'));
-		o.value('Wednesday', _('Wednesday'));
-		o.value('Thursday', _('Thursday'));
-		o.value('Friday', _('Friday'));
-		o.value('Saturday', _('Saturday'));
-
-		o.write = function (section_id, value) {
-			return this.super('write', [section_id, L.toArray(value).join(' ')]);
-		};
-
-		o = s.taboption('timed', form.DynamicList, 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59');
-		o.modalonly = true;
-		//o.default = '00:00:00-23:59:59';
-		o.placeholder = 'hh:mm:ss-hh:mm:ss';
-
-		o.cfgvalue = function (section_id) {
-			var value = uci.get('timecontrol', section_id, 'timerangelist');
-			return sortTimeRanges(value);
-		};
-
-		o.write = function (section_id, value) {
-			let ranges = sortTimeRanges(value);
-			return this.super('write', [section_id, ranges]);
-		};
-
-		o.validate = function (section_id, value) {
-			function isValidTimeRange(str) {
-				const [startSec, endSec] = getRangeSec(str);
-				return startSec !== null && endSec !== null && startSec < endSec;
-			}
-
-			if (!value) return true;
-
-			if (Array.isArray(value)) {
-				for (const v of value) {
-					if (!isValidTimeRange(v)) {
-						return _('Invalid time range') + ': ' + v;
-					}
-				}
-			} else if (typeof value === 'string') {
-				if (!isValidTimeRange(value)) {
-					return _('Invalid time range') + ': ' + value;
-				}
-			}
-
-			const [startSec, endSec] = getRangeSec(value);
-
-			let ranges = this.formvalue(section_id);
-			ranges = Array.isArray(ranges) ? ranges : (ranges ? [ranges] : []);
-
-			for (const r of ranges) {
-				if (r === value) continue;
-				const [rStart, rEnd] = getRangeSec(r);
-				if (!(endSec <= rStart || startSec >= rEnd)) {
-					return _('Time ranges overlap') + ': ' + value + ' --> ' + r;
-				}
-			}
-
-			return true;
-		};
-
-		o = s.taboption('other', form.ListValue, 'temporaryControl', _('Temporary Control'));
-		o.modalonly = true;
+		o.default = '0';
 		o.value('0', _('Temporary Unblock'));
 		o.value('1', _('Temporary Block'));
 
-		o = s.taboption('other', form.Value, 'temporaryDuration', _('Temporary Duration'),
-			_('When the temporary duration timer ends, it will automatically take effect according to the original rules'));
-		o.modalonly = true;
-		//o.depends('enable', '1');
-		o.datatype = 'range(1,720)';
-		for (var i = 1; i <= 5; i++) {
-			o.value(i * 5, i * 5 + ' ' + _('(minutes)'));
-		}
-		for (var i = 1; i <= 4; i++) {
-			o.value(i * 30, i * 30 + ' ' + _('(minutes)'));
-		}
-		for (var i = 3; i <= 12; i++) {
-			o.value(i * 60, i * 60 + ' ' + _('(minutes)'));
-		}
+		o = addTemporaryDurationOption(s, 'other', 'temporaryDuration', _('Temporary Duration'),
+			_('When the temporary duration timer ends, it will automatically take effect according to the original rules'), 1, 720);
 
 		o.cfgvalue = function (section_id) {
 			var value = uci.get('timecontrol', section_id, 'temporaryDuration');

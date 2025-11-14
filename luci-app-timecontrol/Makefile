@@ -8,8 +8,8 @@ include $(TOPDIR)/rules.mk
 LUCI_TITLE:=LuCI support for Time Control (JavaScript)
 LUCI_PKGARCH:=all
 PKG_NAME:=luci-app-timecontrol
-PKG_VERSION:=2.2
-PKG_RELEASE:=20251110
+PKG_VERSION:=2.3
+PKG_RELEASE:=20251113
 
 include $(TOPDIR)/feeds/luci/luci.mk
 
@@ -18,6 +18,8 @@ define Package/$(PKG_NAME)/prerm
 	if [ -f /etc/config/timecontrol ] ; then
 		cp -f /etc/config/timecontrol /tmp/timecontrol_backup
 	fi
+	/etc/init.d/timecontrol stop >/dev/null 2>&1 || true
+	/etc/init.d/timecontrol disable >/dev/null 2>&1 || true
 endef
 
 define Package/$(PKG_NAME)/postinst

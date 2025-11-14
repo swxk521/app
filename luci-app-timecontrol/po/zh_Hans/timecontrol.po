@@ -134,14 +134,14 @@ msgstr "仅阻止来自黑名单地址的网络访问"
 msgid "Whitelist"
 msgstr "白名单"
 
-msgid "Allow network access only from whitelisted addresses"
-msgstr "仅允许来自白名单地址的网络访问"
+msgid "Allow network access only from whitelisted addresses, for more settings go to \"Interface Restrictions\" tab"
+msgstr "仅允许来自白名单地址的网络访问，更多设置请转到“接口限制”选项卡"
 
 msgid "Reject Interface"
 msgstr "拒绝接口"
 
-msgid "This option is valid only when the whitelist is selected"
-msgstr "此选项仅在选择白名单时有效"
+msgid "The interface is only rejected in whitelist mode, unspecified means reject all interfaces"
+msgstr "仅在白名单模式下拒绝指定接口，未指定则拒绝所有接口"
 
 msgid "Temporary Control"
 msgstr "临时管控"
@@ -154,3 +154,6 @@ msgstr "其它设置"
 
 msgid "When the temporary duration timer ends, it will automatically take effect according to the original rules"
 msgstr "当临时时长计时结束后，自动按原规则生效"
+
+msgid "Interface Restrictions"
+msgstr "接口限制"

@@ -59,6 +59,163 @@ load_config() {
 	fi
 }
 
+set_Rules() {
+	local macaddrlist=$1
+	local timerangelist=$2
+	local days=$3
+	local interfacelist=$4
+	local ipsetname=$5
+	local matchflag=$6 # 0: not match, 1: match
+	local id=$7
+
+	if [ -z "$FW4" ]; then
+		local ether_saddr_param
+		if [ -n "$macaddrlist" ]; then
+			ipset create "$ipsetname" hash:mac
+			for macaddr in $macaddrlist; do
+				ipset add "$ipsetname" $macaddr
+			done
+			local match_param
+			if [ $matchflag -eq 0 ]; then
+				match_param="!"
+			fi
+			ether_saddr_param="-m set $match_param --match-set $ipsetname src"
+		fi
+
+		local weekdays_param
+		if [ -n "$days" ]; then
+			weekdays_param="--weekdays "$days""
+		fi
+
+		if [ -z "$timerangelist" ]; then
+			timerangelist="00:00:00-23:59:59"
+		fi
+
+		for timerange in $timerangelist; do
+			timeon=$(echo "$timerange" | awk -F '-' '{print $1}')
+			timeoff=$(echo "$timerange" | awk -F '-' '{print $2}')
+
+			local time_param
+			if [ -n "$timeon" ] && [ -n "$timeoff" ]; then
+				time_param="--timestart $timeon --timestop $timeoff"
+			fi
+
+			local chain target
+			for table in filter nat; do
+				case $table in
+				filter)
+					chain="timecontrol_forward_reject"
+					target="reject"
+					;;
+				nat)
+					chain="timecontrol_dstnat_accept"
+					target="ACCEPT"
+					;;
+				*) ;;
+				esac
+				if [ -n "$interfacelist" ]; then
+					for interface in $interfacelist; do
+						iifname_param="-i ${interface}"
+						iptables_w -t $table -A $chain $iifname_param $ether_saddr_param -m time --kerneltz $time_param $weekdays_param -j $target -m comment --comment "!fw3: Time control"
+					done
+				else
+					iptables_w -t $table -A $chain $ether_saddr_param -m time --kerneltz $time_param $weekdays_param -j $target -m comment --comment "!fw3: Time control"
+				fi
+			done
+		done
+
+	else
+		local ether_saddr_param
+		if [ -n "$macaddrlist" ]; then
+			macaddr=$(echo $macaddrlist | sed 's/ /,/g')
+			local match_param
+			if [ $matchflag -eq 0 ]; then
+				match_param="!="
+			fi
+			ether_saddr_param="ether saddr $match_param { ${macaddr} } "
+		fi
+
+		local meta_hour_param
+		if [ -n "$timerangelist" ]; then
+			local utc_timeranges
+			for timerange in $timerangelist; do
+				if [ -z "$utc_timeranges" ]; then
+					utc_timeranges="$(get_UTC_timerange "$timerange")"
+				else
+					utc_timeranges="${utc_timeranges},$(get_UTC_timerange "$timerange")"
+				fi
+			done
+			meta_hour_param="meta hour { ${utc_timeranges} } "
+		fi
+
+		local meta_day_param
+		if [ -n "$days" ]; then
+			meta_day_param="meta day { ${days} } "
+		fi
+
+		local iifname_param
+		if [ -n "$interfacelist" ]; then
+			local interface=\"$(echo $interfacelist | sed 's/ /","/g')\"
+			iifname_param="iifname { ${interface} } "
+		fi
+
+		TZ=UTC nft "add rule inet fw4 timecontrol_forward_reject ${ether_saddr_param} ${meta_hour_param} ${meta_day_param} ${iifname_param} counter jump handle_reject comment \"!fw4: Time control\""
+		TZ=UTC nft "add rule inet fw4 timecontrol_dstnat_accept ${ether_saddr_param} ${meta_hour_param} ${meta_day_param} ${iifname_param} counter accept comment \"!fw4: Time control\""
+	fi
+
+	local log_MAC="MAC: AllClients;"
+	if [ -n "$macaddrlist" ]; then
+		log_MAC="MAC: $(echo $macaddrlist | sed 's/ /,/g'); "
+	fi
+
+	local log_timeranges="Time: AnyTime; "
+	if [ -n "$timerangelist" ]; then
+		log_timeranges="Time: $(echo $timerangelist | sed 's/ /,/g'); "
+	fi
+
+	local log_weekdays="Weekdays: AnyDay; "
+	if [ -n "$days" ]; then
+		log_weekdays="Weekdays: $(echo $days | sed 's/ /,/g'); "
+	fi
+
+	local log_interface="Interface: *"
+	if [ -n "$interfacelist" ]; then
+		log_interface="Interface: $(echo $interfacelist | sed 's/ /,/g')"
+	fi
+
+	local log_id
+	if [ -n "$id" ]; then
+		log_id="ID: $id; "
+	fi
+
+	logger -t timecontrol "added rule (${log_id}${log_MAC}${log_timeranges}${log_weekdays}${log_interface})"
+}
+
+delete_conntrack() {
+	local macaddrlist=$1
+	local interfacelist=$2
+	local matchflag=$3 # 0: not match, 1: match
+
+	if [ -n "$(command -v conntrack 2>/dev/null)" ]; then
+		local match_param
+		if [ $matchflag -eq 0 ]; then
+			match_param="-v"
+		fi
+
+		mac_regex=$(echo ${macaddrlist} | sed 's/ /|/g')
+		interface_regex=$(echo ${interfacelist} | sed 's/ /|/g')
+
+		ipaddr_list=$(ip neigh | grep -i -E "${mac_regex}" $match_param | grep -i -E "${interface_regex}" | awk '{print $1}')
+		for ipaddr in $ipaddr_list; do
+			conntrack -D --orig-src "$ipaddr" >/dev/null 2>&1
+		done
+
+		if [ -n "$ipaddr_list" ]; then
+			logger -t timecontrol "deleted conntrack entries for IPs: $(echo $ipaddr_list | sed 's/ /,/g')"
+		fi
+	fi
+}
+
 add_controlRules() {
 	local enable=$(config_n_get "$CONF" "$1" "enable" 0)
 	local macaddrlist=$(config_n_get "$CONF" "$1" "macaddrlist")
@@ -104,177 +261,27 @@ add_controlRules() {
 		logger -t timecontrol "temporary block $temporaryDuration minutes (ID: $1)"
 	fi
 
-	if [ -z "$FW4" ]; then
-		local chain target
-		local iifname_param
-		if [ -n "$interface" ]; then
-			iifname_param="-i ${interface}"
-		fi
-
-		local ether_saddr_param
-		if [ -n "$macaddrlist" ]; then
-			ipset create "${CONF}_maclist_$1" hash:mac
-			for macaddr in $macaddrlist; do
-				ipset add "${CONF}_maclist_$1" $macaddr
-			done
-			ether_saddr_param="-m set --match-set ${CONF}_maclist_$1 src"
-		fi
-
-		local weekdays_param
-		if [ -n "$days" ]; then
-			weekdays_param="--weekdays "$days""
-		fi
-
-		if [ -z "$timerangelist" ]; then
-			timerangelist="00:00:00-23:59:59"
-		fi
-
-		for timerange in $timerangelist; do
-			timeon=$(echo "$timerange" | awk -F '-' '{print $1}')
-			timeoff=$(echo "$timerange" | awk -F '-' '{print $2}')
-
-			local time_param
-			if [ -n "$timeon" ] && [ -n "$timeoff" ]; then
-				time_param="--timestart $timeon --timestop $timeoff"
-			fi
-
-			for table in filter nat; do
-				case $table in
-				filter)
-					chain="timecontrol_forward_reject"
-					target="reject"
-					;;
-				nat)
-					chain="timecontrol_dstnat_accept"
-					target="ACCEPT"
-					;;
-				*) ;;
-				esac
-				iptables_w -t $table -A $chain $iifname_param $ether_saddr_param -m time --kerneltz $time_param $weekdays_param -j $target -m comment --comment "!fw3: Time control"
-			done
-		done
-
-	else
-		local ether_saddr_param
-		if [ -n "$macaddrlist" ]; then
-			macaddr=$(echo $macaddrlist | sed 's/ /,/g')
-			ether_saddr_param="ether saddr { ${macaddr} } "
-		fi
-
-		local meta_hour_param
-		if [ -n "$timerangelist" ]; then
-			local utc_timeranges
-			for timerange in $timerangelist; do
-				if [ -z "$utc_timeranges" ]; then
-					utc_timeranges="$(get_UTC_timerange "$timerange")"
-				else
-					utc_timeranges="${utc_timeranges},$(get_UTC_timerange "$timerange")"
-				fi
-			done
-			meta_hour_param="meta hour { ${utc_timeranges} } "
-		fi
-
-		local meta_day_param
-		if [ -n "$days" ]; then
-			meta_day_param="meta day { ${days} } "
-		fi
-
-		local iifname_param
-		if [ -n "$interface" ]; then
-			iifname_param="iifname \"${interface}\""
-		fi
-
-		TZ=UTC nft "add rule inet fw4 timecontrol_forward_reject ${ether_saddr_param} ${meta_hour_param} ${meta_day_param} ${iifname_param} counter jump handle_reject comment \"!fw4: Time control\""
-		TZ=UTC nft "add rule inet fw4 timecontrol_dstnat_accept ${ether_saddr_param} ${meta_hour_param} ${meta_day_param} ${iifname_param} counter accept comment \"!fw4: Time control\""
-	fi
-
-	local log_MAC=" MAC: AllClients;"
-	if [ -n "$macaddrlist" ]; then
-		log_MAC=" MAC: $(echo $macaddrlist | sed 's/ /,/g');"
-	fi
-
-	local log_timeranges=" Time: AnyTime;"
-	if [ -n "$timerangelist" ]; then
-		log_timeranges=" Time: $(echo $timerangelist | sed 's/ /,/g');"
-	fi
-
-	local log_weekdays=" Weekdays: AnyDay;"
-	if [ -n "$weekdays" ]; then
-		log_weekdays=" Weekdays: $(echo $weekdays | sed 's/ /,/g');"
-	fi
-
-	local log_interface=" Interface: *"
-	if [ -n "$interface" ]; then
-		log_interface=" Interface: $(echo $interface | sed 's/ /,/g')"
-	fi
-
-	logger -t timecontrol "added rule (ID: $1;${log_MAC}${log_timeranges}${log_weekdays}${log_interface})"
-
-	if [ -n "$(command -v conntrack 2>/dev/null)" ]; then
-		regex=$(echo ${macaddrlist} | sed 's/ /|/g')
-		ipaddr_list=$(ip neigh | grep -i -E "${regex}" | awk '{print $1}')
-
-		for ipaddr in $ipaddr_list; do
-			conntrack -D --orig-src "$ipaddr" >/dev/null 2>&1
-		done
-		if [ -n "$ipaddr_list" ]; then
-			logger -t timecontrol "deleted conntrack entries for IPs: $(echo $ipaddr_list | sed 's/ /,/g')"
-		fi
-	fi
+	set_Rules "$macaddrlist" "$timerangelist" "$days" "$interface" "${CONF}_maclist_$1" 1 "$1"
+	delete_conntrack "$macaddrlist" "$interface" 1
 }
 
 add_rejectRule() {
 	local rejectInterface=$(config_n_get "$CONF" "config" "rejectInterface")
+	local timerangelist=$(config_n_get "$CONF" "config" "timerangelist")
+	local weekdays=$(config_n_get "$CONF" "config" "weekdays")
 
 	if [ -n "$RulesMACAddrList" ]; then
 		RulesMACAddrList=$(echo $RulesMACAddrList | tr ' ' '\n' | awk '!a[$0]++' | tr '\n' ' ')
 	fi
 
-	local ether_saddr_param iifname_param
-	if [ -z "$FW4" ]; then
-		if [ -n "$RulesMACAddrList" ]; then
-			ipset create "${CONF}_maclist" hash:mac
-			for macaddr in $RulesMACAddrList; do
-				ipset add "${CONF}_maclist" $macaddr
-			done
-			ether_saddr_param="-m set ! --match-set ${CONF}_maclist src"
-		fi
-
-		if [ -n "$rejectInterface" ]; then
-			for interface in $rejectInterface; do
-				iifname_param="-i ${interface}"
-				iptables_w -t filter -A timecontrol_forward_reject $iifname_param $ether_saddr_param -j reject -m comment --comment "!fw3: Time control"
-				iptables_w -t nat -A timecontrol_dstnat_accept $iifname_param $ether_saddr_param -j ACCEPT -m comment --comment "!fw3: Time control"
-			done
-		else
-			iptables_w -t filter -A timecontrol_forward_reject $ether_saddr_param -j reject -m comment --comment "!fw3: Time control"
-			iptables_w -t nat -A timecontrol_dstnat_accept $ether_saddr_param -j ACCEPT -m comment --comment "!fw3: Time control"
-		fi
-	else
-		if [ -n "$rejectInterface" ]; then
-			local interface=\"$(echo $rejectInterface | sed 's/ /","/g')\"
-			iifname_param="iifname { ${interface} } "
-		fi
-
-		if [ -n "$RulesMACAddrList" ]; then
-			macaddr=$(echo $RulesMACAddrList | sed 's/ /,/g')
-			ether_saddr_param="ether saddr != { ${macaddr} } "
-		fi
-
-		nft "add rule inet fw4 timecontrol_forward_reject ${iifname_param} ${ether_saddr_param} counter jump handle_reject comment \"!fw4: Time control\""
-		nft "add rule inet fw4 timecontrol_dstnat_accept ${iifname_param} ${ether_saddr_param} counter accept comment \"!fw4: Time control\""
+	weekdays=$(echo "$weekdays" | sed 's/ /,/g')
+	local days
+	if [ "$weekdays" != "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday" ]; then
+		days="$weekdays"
 	fi
 
-	local log_MAC="MAC: AllClients;"
-	if [ -n "$RulesMACAddrList" ]; then
-		log_MAC="MAC: $(echo $RulesMACAddrList | sed 's/ /,/g');"
-	fi
-
-	local log_rejectInterface=" Reject Interface: *"
-	if [ -n "$rejectInterface" ]; then
-		log_rejectInterface=" Reject Interface: $(echo $rejectInterface | sed 's/ /,/g')"
-	fi
-	logger -t timecontrol "added rule (${log_MAC}${log_rejectInterface})"
+	set_Rules "$RulesMACAddrList" "$timerangelist" "$days" "$rejectInterface" "${CONF}_maclist" 0
+	delete_conntrack "$RulesMACAddrList" "$rejectInterface" 0
 }
 
 cleanup_ipset() {
