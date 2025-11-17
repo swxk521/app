@@ -53,11 +53,12 @@
 #### 注：
 #### 1. nft meta hour {"xx:xx:xx"-"xx:xx:xx"} 集合用法需要将时段转成UTC时段且不支持跨天时段
 #### 例如：北京时间"06:00:00-13:00:00"转换为UTC时间后是"22:00:00-05:00:00"，这将导致nft报错"Error: Range negative size"
-<img width="1865" height="266" alt="image" src="https://github.com/user-attachments/assets/e0d63069-7ebc-4587-9ed1-84b9acf3afbe" />
-<img width="1809" height="439" alt="image" src="https://github.com/user-attachments/assets/e5661cf5-04f9-4601-8b14-861b4a3a3903" />
+![screenshots](./doc/nft_timeRangeError_1.png)
+
+![screenshots](./doc/nft_timeRangeError_2.png)
 
 #### 2. 将北京时间"06:00:00-13:00:00"拆分成"06:00:00-07:59:59","08:00:00-13:00:00"后，则可正常写入
-<img width="1864" height="176" alt="image" src="https://github.com/user-attachments/assets/d2cfc356-3f0f-49c7-bfb4-d4c4d035eae2" />
+![screenshots](./doc/nft_timeRange.png)
 
 ### 8. 管控类型
 - 支持黑/白名单切换
@@ -72,5 +73,5 @@
 
 
 ## 界面
-<img width="1920" height="1020" alt="image" src="https://github.com/user-attachments/assets/2e86b688-076c-4142-9bb9-81d10a10b7c5" />
+![screenshots](./doc/UI.png)
 
