@@ -73,5 +73,5 @@
 
 
 ## 界面
-![screenshots](./doc/UI.png)
+![screenshots](./doc/UI.jpeg)
 
