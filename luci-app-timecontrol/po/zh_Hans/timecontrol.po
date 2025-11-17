@@ -157,3 +157,12 @@ msgstr "当临时时长计时结束后，自动按原规则生效"
 
 msgid "Interface Restrictions"
 msgstr "接口限制"
+
+msgid "Please add at least one rule first"
+msgstr "请先至少添加一条规则"
+
+msgid "Set temporary block duration for all rules successfully"
+msgstr "为所有规则设置临时封禁时间成功"
+
+msgid "Set temporary unblock duration for all rules successfully"
+msgstr "为所有规则设置临时封禁时间成功"

@@ -348,7 +348,7 @@ function getAvailableDuration(timeRanges, s) {
 function addTemporaryDurationOption(s, tab, name, label, description, startValue, endValue) {
 	var o = s.taboption(tab, form.Value, name, label, description);
 	o.modalonly = true;
-	o.datatype = 'range(' + startValue + ',' + endValue + ')';
+	o.datatype = 'and(integer,range(' + startValue + ',' + endValue + '))';
 	for (var i = startValue; i <= 5; i++) {
 		o.value(i * 5, i * 5 + ' ' + _('(minutes)'));
 	}
@@ -504,11 +504,10 @@ return view.extend({
 		o.default = o.disabled;
 		o.rmempty = false;
 
-		o.handleValueChange = function (section_id, state, ev) {
-			var value = this.formvalue(section_id);
+		o.onchange = function (ev, section_id, value) {
 			uci.set('timecontrol', section_id, 'enable', value);
 			uci.save();
-		};
+		}
 
 		o = s.taboption('global', form.RichListValue, 'controlType', _('Control Type'), _('Set control type to blacklist or whitelist'));
 		o.modalonly = true;
@@ -516,10 +515,10 @@ return view.extend({
 		o.value('0', _('Blacklist'), _('Blocks network access only from blacklisted addresses'));
 		o.value('1', _('Whitelist'), _('Allow network access only from whitelisted addresses, for more settings go to \"Interface Restrictions\" tab'));
 
-		o.handleValueChange = function (section_id, state, ev) {
-			uci.set('timecontrol', section_id, 'controlType', ev.target.value);
+		o.onchange = function (ev, section_id, value) {
+			uci.set('timecontrol', section_id, 'controlType', value);
 			uci.save();
-		};
+		}
 
 		o = s.taboption('restriction', widgets.DeviceSelect, 'rejectInterface', _('Interface'), _('The interface is only rejected in whitelist mode, unspecified means reject all interfaces'));
 		o.depends('controlType', '1');
@@ -528,33 +527,32 @@ return view.extend({
 		o.unspecified = true;
 		o.multiple = true;
 
-		o.handleValueChange = function (section_id, state, ev) {
-			uci.set('timecontrol', section_id, 'rejectInterface', ev.target.value);
+		o.onchange = function (ev, section_id, value) {
+			uci.set('timecontrol', section_id, 'rejectInterface', value);
 			uci.save();
-		};
+		}
 
 		o = addWeekdayOption(s, 'restriction', 'weekdays', _('Week Days'));
 		o.depends('controlType', '1');
 
-		o.handleValueChange = function (section_id, state, ev) {
-			uci.set('timecontrol', section_id, 'weekdays', ev.target.value);
+		o.onchange = function (ev, section_id, value) {
+			uci.set('timecontrol', section_id, 'weekdays', value);
 			uci.save();
-		};
+		}
 
 		o = addTimeRangeOption(s, 'restriction', 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59');
 		o.depends('controlType', '1');
 
-		o.handleValueChange = function (section_id, state, ev) {
-			var value = this.formvalue(section_id);
+		o.onchange = function (ev, section_id, value) {
 			if (Array.isArray(value)) {
 				if (value.length === 0) {
 					uci.set('timecontrol', section_id, 'timerangelist', '');
 				} else {
 					uci.set('timecontrol', section_id, 'timerangelist', value);
 				}
-				uci.save();
-			};
-		};
+			}
+			uci.save();
+		}
 
 		o = addTemporaryDurationOption(s, 'quick', 'blockDuration', _('Temporary Block'), _('Set block duration for all rules'), 0, 720);
 
@@ -562,23 +560,23 @@ return view.extend({
 			return true;
 		};
 
-		o.handleValueChange = function (section_id, state, ev) {
-			if (ev.target.value === null || ev.target.value.trim() === '') {
-				return;
-			}
+		o.onchange = function (ev, section_id, value) {
 			var sections = getUciSections('rule');
 			if (sections.length === 0) {
+				ui.addTimeLimitedNotification(null, E('p', _('Please add at least one rule first')), 3000, 'error');
 				return;
 			}
 			sections.forEach(element => {
 				var sectionId = element['.name'];
 				uci.set('timecontrol', sectionId, 'temporaryControl', 1);
-				uci.set('timecontrol', sectionId, 'temporaryDuration', ev.target.value);
+				uci.set('timecontrol', sectionId, 'temporaryDuration', value);
 			});
-			this.map.save(null, true);
+			this.map.save(null, true).then(function () {
+				ui.addTimeLimitedNotification(null, E('p', _('Set temporary block duration for all rules successfully')), 3000, 'success');
+			});
 			//this.map.reset();
 			//location.reload();
-		};
+		}
 
 		o = addTemporaryDurationOption(s, 'quick', 'unblockDuration', _('Temporary Unblock'), _('Set unblock duration for all rules'), 0, 720);
 
@@ -586,21 +584,21 @@ return view.extend({
 			return true;
 		};
 
-		o.handleValueChange = function (section_id, state, ev) {
-			if (ev.target.value === null || ev.target.value.trim() === '') {
-				return;
-			}
+		o.onchange = function (ev, section_id, value) {
 			var sections = getUciSections('rule');
 			if (sections.length === 0) {
+				ui.addTimeLimitedNotification(null, E('p', _('Please add at least one rule first')), 3000, 'error');
 				return;
 			}
 			sections.forEach(element => {
 				var sectionId = element['.name'];
 				uci.set('timecontrol', sectionId, 'temporaryControl', 0);
-				uci.set('timecontrol', sectionId, 'temporaryDuration', ev.target.value);
+				uci.set('timecontrol', sectionId, 'temporaryDuration', value);
 			});
-			this.map.save(null, true);
-		};
+			this.map.save(null, true).then(function () {
+				ui.addTimeLimitedNotification(null, E('p', _('Set temporary unblock duration for all rules successfully')), 3000, 'success');
+			});
+		}
 
 		s = m.section(form.GridSection, 'rule', _('Control Rules'));
 		s.addremove = true;
@@ -625,12 +623,10 @@ return view.extend({
 		o.default = o.disabled;
 		o.editable = true;
 
-		o.handleValueChange = function (section_id, state, ev) {
-			//ui.changes.apply(true);
-			var value = this.formvalue(section_id);
+		o.onchange = function (ev, section_id, value) {
 			uci.set('timecontrol', section_id, 'enable', value);
 			uci.save();
-		};
+		}
 
 		o = s.option(form.Value, '', _('Temporary Unblock/Block'));
 		o.modalonly = false;
