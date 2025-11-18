@@ -446,6 +446,30 @@ if (typeof form.RichListValue !== 'function') {
 	form.RichListValue = CBIRichListValue;
 }
 
+// 兼容性处理：如果 ui.addTimeLimitedNotification 不存在则自定义
+if (typeof ui.addTimeLimitedNotification !== 'function') {
+	function addTimeLimitedNotification(title, children, timeout, ...classes) {
+		const msg = ui.addNotification(title, children, ...classes);
+		function fadeOutNotification(element) {
+			if (element) {
+				element.classList.add('fade-out');
+				element.classList.remove('fade-in');
+				setTimeout(() => {
+					if (element.parentNode) {
+						element.parentNode.removeChild(element);
+					}
+				}
+				);
+			}
+		}
+		if (typeof timeout === 'number' && timeout > 0) {
+			setTimeout(() => fadeOutNotification(msg), timeout);
+		}
+		return msg;
+	};
+	ui.addTimeLimitedNotification = addTimeLimitedNotification;
+}
+
 return view.extend({
 	callHostHints: rpc.declare({
 		object: 'luci-rpc',
@@ -507,7 +531,7 @@ return view.extend({
 		o.onchange = function (ev, section_id, value) {
 			uci.set('timecontrol', section_id, 'enable', value);
 			uci.save();
-		}
+		};
 
 		o = s.taboption('global', form.RichListValue, 'controlType', _('Control Type'), _('Set control type to blacklist or whitelist'));
 		o.modalonly = true;
@@ -518,7 +542,7 @@ return view.extend({
 		o.onchange = function (ev, section_id, value) {
 			uci.set('timecontrol', section_id, 'controlType', value);
 			uci.save();
-		}
+		};
 
 		o = s.taboption('restriction', widgets.DeviceSelect, 'rejectInterface', _('Interface'), _('The interface is only rejected in whitelist mode, unspecified means reject all interfaces'));
 		o.depends('controlType', '1');
@@ -530,7 +554,7 @@ return view.extend({
 		o.onchange = function (ev, section_id, value) {
 			uci.set('timecontrol', section_id, 'rejectInterface', value);
 			uci.save();
-		}
+		};
 
 		o = addWeekdayOption(s, 'restriction', 'weekdays', _('Week Days'));
 		o.depends('controlType', '1');
@@ -538,7 +562,7 @@ return view.extend({
 		o.onchange = function (ev, section_id, value) {
 			uci.set('timecontrol', section_id, 'weekdays', value);
 			uci.save();
-		}
+		};
 
 		o = addTimeRangeOption(s, 'restriction', 'timerangelist', _('Time Ranges'), _('Example') + ': ' + '00:00:00-10:00:00,11:00:00-13:59:59');
 		o.depends('controlType', '1');
@@ -552,7 +576,7 @@ return view.extend({
 				}
 			}
 			uci.save();
-		}
+		};
 
 		o = addTemporaryDurationOption(s, 'quick', 'blockDuration', _('Temporary Block'), _('Set block duration for all rules'), 0, 720);
 
@@ -563,7 +587,7 @@ return view.extend({
 		o.onchange = function (ev, section_id, value) {
 			var sections = getUciSections('rule');
 			if (sections.length === 0) {
-				ui.addTimeLimitedNotification(null, E('p', _('Please add at least one rule first')), 3000, 'error');
+				ui.addTimeLimitedNotification(null, E('p', _('Please add at least one rule first')), 3000, 'warning');
 				return;
 			}
 			sections.forEach(element => {
@@ -576,7 +600,7 @@ return view.extend({
 			});
 			//this.map.reset();
 			//location.reload();
-		}
+		};
 
 		o = addTemporaryDurationOption(s, 'quick', 'unblockDuration', _('Temporary Unblock'), _('Set unblock duration for all rules'), 0, 720);
 
@@ -587,7 +611,7 @@ return view.extend({
 		o.onchange = function (ev, section_id, value) {
 			var sections = getUciSections('rule');
 			if (sections.length === 0) {
-				ui.addTimeLimitedNotification(null, E('p', _('Please add at least one rule first')), 3000, 'error');
+				ui.addTimeLimitedNotification(null, E('p', _('Please add at least one rule first')), 3000, 'warning');
 				return;
 			}
 			sections.forEach(element => {
@@ -598,7 +622,7 @@ return view.extend({
 			this.map.save(null, true).then(function () {
 				ui.addTimeLimitedNotification(null, E('p', _('Set temporary unblock duration for all rules successfully')), 3000, 'success');
 			});
-		}
+		};
 
 		s = m.section(form.GridSection, 'rule', _('Control Rules'));
 		s.addremove = true;
@@ -626,7 +650,7 @@ return view.extend({
 		o.onchange = function (ev, section_id, value) {
 			uci.set('timecontrol', section_id, 'enable', value);
 			uci.save();
-		}
+		};
 
 		o = s.option(form.Value, '', _('Temporary Unblock/Block'));
 		o.modalonly = false;

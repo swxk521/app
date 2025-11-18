@@ -22,8 +22,8 @@ start_service() {
 	local enabled=$(config_n_get "$CONF" "config" "enable" 0)
 
 	if [ $enabled -ne 1 ]; then
-		$(/etc/init.d/"$CONF" stop) >/dev/null 2>&1
-		return 1
+		cleanup
+		return 0
 	fi
 
 	mkdir -p "$(dirname "$INCLUDE_PATH")" && echo "/etc/init.d/$CONF reload" >"$INCLUDE_PATH"
