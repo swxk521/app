@@ -165,4 +165,4 @@ msgid "Set temporary block duration for all rules successfully"
 msgstr "为所有规则设置临时封禁时间成功"
 
 msgid "Set temporary unblock duration for all rules successfully"
-msgstr "为所有规则设置临时封禁时间成功"
+msgstr "为所有规则设置临时解封时间成功"
