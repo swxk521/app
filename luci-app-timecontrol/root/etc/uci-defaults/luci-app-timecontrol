@@ -1,19 +1,16 @@
 #!/bin/sh
 
-uci -q batch <<-EOF >/dev/null
-	delete firewall.timecontrol
-	set firewall.timecontrol=include
-	set firewall.timecontrol.type=script
-	set firewall.timecontrol.path=/var/etc/timecontrol.include
-	set firewall.timecontrol.reload=1
-EOF
+uci -q delete firewall.timecontrol
+uci -q set firewall.timecontrol=include
+uci -q set firewall.timecontrol.type=script
+uci -q set firewall.timecontrol.path=/var/etc/timecontrol.include
+[ -n "$(command -v fw4)" ] || uci -q set firewall.timecontrol.reload=1
+uci -q commit firewall
 
-uci -q batch <<-EOF >/dev/null
-	delete ucitrack.@timecontrol[-1]
-	add ucitrack timecontrol
-	set ucitrack.@timecontrol[-1].init=timecontrol
-	commit ucitrack
-EOF
+uci -q delete ucitrack.@timecontrol[-1]
+uci -q add ucitrack timecontrol
+uci -q set ucitrack.@timecontrol[-1].init=timecontrol
+uci -q commit ucitrack
 
-rm -rf /tmp/luci-*cache
+rm -f /tmp/luci-indexcache* 2>/dev/null
 exit 0
