@@ -16,6 +16,8 @@
 
 本项目主要为家庭网络管理而设计，方便限制家庭成员使用各种电子设备（手机、平板、TV）。例如：根据特定任务的完成情况，可方便地给予临时时长奖励或惩罚，且不会忘记重新开启限制。
 
+![screenshots](./doc/UI-CN.gif)
+
 ### 功能特性
 
 #### 1. 支持单一规则多MAC地址、多时段
@@ -76,9 +78,6 @@
 - '禁网时段'不为空时，则按设定的'禁网时段'和选中的'星期'禁网（即：按'黑名单'规则逻辑处理）。
 - '禁网时段'为空和'星期'不为每天（星期1~7）时，则选中'星期'的所有时段禁网（即：按'黑名单'规则逻辑处理）。
 
-### 界面
-![screenshots](./doc/UI.jpeg)
-
 ---
 
 ## English
@@ -89,6 +88,8 @@
 - **JavaScript version**: Brand-new UI, independently developed
 
 This project is mainly designed for home network management, making it easy to restrict the usage of various electronic devices (phones, tablets, TVs) by family members. For example: you can conveniently grant temporary time rewards or penalties based on task completion without forgetting to re-enable restrictions.
+
+![screenshots](./doc/UI-EN.gif)
 
 ### Features
 
@@ -149,6 +150,3 @@ Note: Whitelist mode rule handling logic
 - For Docker and other NAT-forwarding cases, exclude the relevant interfaces in 'reject interface' or add MAC addresses to rules.
 - If 'time ranges' is not empty, then blocking is applied according to the configured 'time ranges' and selected 'weekdays' (i.e., handled as blacklist logic).
 - If 'time ranges' is empty and 'weekdays' is not every day, then all times on selected weekdays are blocked (i.e., handled as blacklist logic).
-
-### UI
-![screenshots](./doc/UI.jpeg)
