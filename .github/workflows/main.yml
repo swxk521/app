@@ -1,6 +1,9 @@
 name: Build-luci-app-timecontrol
 
-on: [push]
+on:
+  push:
+    paths:
+      - 'luci-app-timecontrol/**'
 
 env:
   TZ: Asia/Shanghai
