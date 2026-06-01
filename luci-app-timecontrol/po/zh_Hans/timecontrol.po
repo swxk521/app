@@ -1,0 +1,86 @@
+msgid "Control"
+msgstr "管控"
+
+msgid "Timecontrol"
+msgstr "时间控制"
+
+msgid "Internet time control"
+msgstr "上网时间控制"
+
+msgid "Enabled"
+msgstr "启用"
+
+msgid "Timecontrol switch"
+msgstr "开关"
+
+msgid "Monday"
+msgstr "周一"
+
+msgid "Tuesday"
+msgstr "周二"
+
+msgid "Wednesday"
+msgstr "周三"
+
+msgid "Thursday"
+msgstr "周四"
+
+msgid "Friday"
+msgstr "周五"
+
+msgid "Saturday"
+msgstr "周六"
+
+msgid "Sunday"
+msgstr "周日"
+
+msgid "Not running"
+msgstr "未运行"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "NOT RUNNING"
+msgstr "未运行"
+
+msgid "RUNNING"
+msgstr "运行中"
+
+msgid "Users can limit their internet usage time through MAC and IP, with available IP ranges such as 192.168.110.00 to 192.168.10.200,Managed devices will be unable to access the soft router's administrative interface!"
+msgstr "可以通过 MAC、IP 限制用户上网时间，可用 IP 范围如：192.168.10.100-192.168.10.200，被管控的机器将无法连接上软路由后台！"
+
+msgid "When the start and end times are the same, enable viewing and rest time control, cycling in minutes in a repeating loop."
+msgstr "当开始和结束时间一样时,启用观看和休息时间控制,以分钟为单位往复循环。"
+
+msgid "IP/MAC"
+msgstr "IP/MAC"
+
+msgid "Comment"
+msgstr "备注"
+
+msgid "Start control time"
+msgstr "起控时间"
+
+msgid "Stop control time"
+msgstr "停控时间"
+
+msgid "Viewing time"
+msgstr "观看时间"
+
+msgid "Rest time"
+msgstr "休息时间"
+
+msgid "Please enter a positive integer"
+msgstr "请输入正整数"
+
+msgid "Week Day(1~7)"
+msgstr "星期(1~7)"
+
+msgid "Rest Day"
+msgstr "休息日"
+
+msgid "Workday"
+msgstr "工作日"
+
+msgid "Everyday"
+msgstr "每天"
