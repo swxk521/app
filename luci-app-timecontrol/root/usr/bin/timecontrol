@@ -1,0 +1,1188 @@
+#!/bin/sh
+
+# Copyright (C) 2006 OpenWrt.org
+# Copyright 2022-2025 sirpdboy <herboy2008@gmail.com>
+
+crrun=$1
+crid=$2
+NAME=timecontrol
+DEBUG=0
+
+IDLIST="/var/$NAME.idlist"
+TARGETLIST="/var/$NAME.targetlist"
+LOG_FILE="/var/log/$NAME.log"
+LOCK_FILE="/var/run/$NAME.lock"
+LOOP_STATE_DIR="/var/run/$NAME"
+
+NFT_TABLE="$NAME"
+NFT_IP_SET="${NAME}_blacklist_ip"
+NFT_BRIDGE_SET="${NAME}_blacklist_mac"
+
+config_get_type() {
+    local ret
+    ret=$(uci -q get "${NAME}.${1}")
+    echo "${ret:-$2}"
+}
+
+config_n_get() {
+    local ret
+    ret=$(uci -q get "${NAME}.${1}.${2}")
+    echo "${ret:-$3}"
+}
+
+config_t_get() {
+    local index=${3:-0}
+    local default=$4
+    local ret
+    ret=$(uci -q get "${NAME}.@${1}[${index}].${2}")
+    echo "${ret:-$default}"
+}
+
+config_t_set() {
+    local section=$1
+    local option=$2
+    local index=${3:-0}
+    local value=$4
+
+    uci -q set "${NAME}.@${section}[${index}].${option}=${value}"
+}
+
+dbg() {
+    local d
+    d="$(date "+%Y-%m-%d %H:%M:%S")"
+    [ "$DEBUG" -eq 1 ] && echo "$d DEBUG: $*" >> "$LOG_FILE"
+}
+
+lock_instance() {
+    if command -v flock >/dev/null 2>&1; then
+        exec 9>"$LOCK_FILE"
+        flock -n 9 || exit 0
+    fi
+}
+
+bin_nft=$(command -v nft 2>/dev/null)
+
+if [ -n "$bin_nft" ] && [ -x "$bin_nft" ]; then
+    dbg "nft found: $bin_nft"
+else
+    dbg "nftables not found"
+    exit 1
+fi
+
+nft() {
+    dbg "nft $*"
+    "$bin_nft" "$@" 2>/dev/null
+}
+
+ensure_idlist() {
+    [ -f "$IDLIST" ] || : > "$IDLIST"
+}
+
+ensure_targetlist() {
+    [ -f "$TARGETLIST" ] || : > "$TARGETLIST"
+}
+
+ensure_loop_state_dir() {
+    [ -d "$LOOP_STATE_DIR" ] || mkdir -p "$LOOP_STATE_DIR"
+}
+
+safe_state_key() {
+    printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'
+}
+
+loop_state_file() {
+    echo "$LOOP_STATE_DIR/device_$(safe_state_key "$1").state"
+}
+
+clear_loop_states() {
+    rm -rf "$LOOP_STATE_DIR"
+}
+
+id_in_list() {
+    grep -Fxq "!$1!" "$IDLIST" 2>/dev/null
+}
+
+add_id_to_list() {
+    ensure_idlist
+    id_in_list "$1" || echo "!$1!" >> "$IDLIST"
+}
+
+del_id_from_list() {
+    ensure_idlist
+
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+
+    sed -i "/^!$1!$/d" "$IDLIST"
+}
+
+target_in_list() {
+    grep -Fxq "!$1!" "$TARGETLIST" 2>/dev/null
+}
+
+add_target_to_list() {
+    ensure_targetlist
+    target_in_list "$1" || echo "!$1!" >> "$TARGETLIST"
+}
+
+parse_ids() {
+    echo "$1" | tr ',' ' ' | tr -d '!' | tr ' ' '\n' | grep -E '^[0-9]+$'
+}
+
+get_enabled_device_ids() {
+    is_enabled || return 0
+
+    uci show "$NAME" 2>/dev/null |
+        sed -n "s/^${NAME}\.@device\[\([0-9][0-9]*\)\]\.enable='1'$/\1/p"
+}
+
+is_enabled() {
+    [ "$(uci -q get "$NAME.@timecontrol[0].enabled" 2>/dev/null)" = "1" ]
+}
+
+to_dec() {
+    local num=$1
+
+    while [ "${num#0}" != "$num" ]; do
+        num=${num#0}
+    done
+
+    echo "${num:-0}"
+}
+
+valid_ipv4() {
+    local ip=$1
+    local old_ifs octet
+
+    case "$ip" in
+        ''|*[!0-9.]*|.*|*.|*..*)
+            return 1
+            ;;
+    esac
+
+    old_ifs=$IFS
+    IFS=.
+    set -- $ip
+    IFS=$old_ifs
+    [ "$#" -eq 4 ] || return 1
+
+    for octet in "$@"; do
+        case "$octet" in
+            ''|*[!0-9]*)
+                return 1
+                ;;
+        esac
+
+        [ "${#octet}" -le 3 ] || return 1
+        octet=$(to_dec "$octet")
+        [ "$octet" -le 255 ] || return 1
+    done
+
+    return 0
+}
+
+ip_to_int() {
+    local a b c d
+    local old_ifs
+
+    old_ifs=$IFS
+    IFS=.
+    set -- $1
+    IFS=$old_ifs
+
+    a=$(to_dec "$1")
+    b=$(to_dec "$2")
+    c=$(to_dec "$3")
+    d=$(to_dec "$4")
+
+    echo $((a * 16777216 + b * 65536 + c * 256 + d))
+}
+
+int_to_ip() {
+    local num=$1
+
+    echo "$(((num / 16777216) % 256)).$(((num / 65536) % 256)).$(((num / 256) % 256)).$((num % 256))"
+}
+
+valid_minutes() {
+    case "$1" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+    esac
+
+    [ "$1" -gt 0 ]
+}
+
+current_minute_tick() {
+    local now
+
+    now=$(date +%s 2>/dev/null) || now=0
+    echo $((now / 60))
+}
+
+sanitize_counter() {
+    case "$1" in
+        ''|*[!0-9]*)
+            echo 0
+            ;;
+        *)
+            echo "$1"
+            ;;
+    esac
+}
+
+loop_state_get() {
+    local file=$1
+    local key=$2
+    local default=$3
+    local value
+
+    value=$(sed -n "s/^${key}=//p" "$file" 2>/dev/null | tail -n 1)
+    echo "${value:-$default}"
+}
+
+loop_signature() {
+    local target_key=$1
+    local watch_limit=$2
+    local rest_limit=$3
+
+    printf '%s|%s|%s\n' "$target_key" "$watch_limit" "$rest_limit"
+}
+
+save_loop_state() {
+    local id=$1
+    local signature=$2
+    local mode=$3
+    local watch_used=$4
+    local rest_left=$5
+    local offline_minutes=$6
+    local last_tick=$7
+    local file
+
+    ensure_loop_state_dir
+    file=$(loop_state_file "$id")
+
+    {
+        echo "target_key=${signature%%|*}"
+        echo "signature=$signature"
+        echo "mode=$mode"
+        echo "watch_used=$watch_used"
+        echo "rest_left=$rest_left"
+        echo "offline_minutes=$offline_minutes"
+        echo "last_tick=$last_tick"
+    } > "$file"
+}
+
+reset_loop_state() {
+    rm -f "$(loop_state_file "$1")"
+}
+
+reset_loop_states_for_id() {
+    local id=$1
+    local file
+
+    reset_loop_state "$id"
+    for file in "$LOOP_STATE_DIR"/device_"$(safe_state_key "$id")"_*.state; do
+        [ -f "$file" ] && rm -f "$file"
+    done
+}
+
+list_known_ipv4s() {
+    if [ -r /proc/net/arp ]; then
+        awk 'NR > 1 && $4 != "00:00:00:00:00:00" { print $1 }' /proc/net/arp
+    fi
+
+    ip -4 neigh show 2>/dev/null |
+        awk '/lladdr/ && $0 !~ /FAILED|INCOMPLETE/ { print $1 }'
+}
+
+list_ips_by_mac() {
+    local mac
+
+    mac=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+
+    if [ -r /proc/net/arp ]; then
+        awk -v mac="$mac" 'NR > 1 && tolower($4) == mac { print $1 }' /proc/net/arp
+    fi
+
+    ip -4 neigh show 2>/dev/null |
+        awk -v mac="$mac" 'tolower($0) ~ ("lladdr " mac) && $0 !~ /FAILED|INCOMPLETE/ { print $1 }'
+}
+
+arp_ip_known() {
+    local ip=$1
+
+    [ -r /proc/net/arp ] || return 1
+    awk -v ip="$ip" 'NR > 1 && $1 == ip && $4 != "00:00:00:00:00:00" { found=1 } END { exit !found }' /proc/net/arp
+}
+
+ip_neigh_online() {
+    local ip=$1
+
+    ip -4 neigh show 2>/dev/null |
+        awk -v ip="$ip" '$1 == ip && /lladdr/ && $0 !~ /FAILED|INCOMPLETE/ { found=1 } END { exit !found }'
+}
+
+ip_is_online() {
+    local ip=$1
+
+    valid_ipv4 "$ip" || return 1
+
+    ping -c 1 -W 1 "$ip" >/dev/null 2>&1 && return 0
+    ip_neigh_online "$ip" && return 0
+    arp_ip_known "$ip"
+}
+
+ip_target_online() {
+    local target=$1
+    local bounds start_num end_num ip ip_num
+
+    if valid_ipv4 "$target"; then
+        ip_is_online "$target"
+        return $?
+    fi
+
+    bounds=$(ip_target_to_bounds "$target") || return 1
+    set -- $bounds
+    start_num=$1
+    end_num=$2
+
+    for ip in $(list_known_ipv4s | sort -u); do
+        valid_ipv4 "$ip" || continue
+        ip_num=$(ip_to_int "$ip")
+
+        if [ "$ip_num" -ge "$start_num" ] && [ "$ip_num" -le "$end_num" ]; then
+            ip_is_online "$ip" && return 0
+        fi
+    done
+
+    return 1
+}
+
+ip_target_contains_ip() {
+    local target=$1
+    local ip=$2
+    local bounds start_num end_num ip_num
+
+    valid_ipv4 "$ip" || return 1
+
+    bounds=$(ip_target_to_bounds "$target") || return 1
+    set -- $bounds
+    start_num=$1
+    end_num=$2
+    ip_num=$(ip_to_int "$ip")
+
+    [ "$ip_num" -ge "$start_num" ] && [ "$ip_num" -le "$end_num" ]
+}
+
+list_known_ips_in_target() {
+    local target=$1
+    local ip
+
+    for ip in $(list_known_ipv4s | sort -u); do
+        ip_target_contains_ip "$target" "$ip" && echo "$ip"
+    done
+}
+
+list_tracked_ips_for_id() {
+    local id=$1
+    local file target ip
+
+    for file in "$LOOP_STATE_DIR"/device_"$(safe_state_key "$id")"_ip_*.state; do
+        [ -f "$file" ] || continue
+        target=$(loop_state_get "$file" target_key "")
+
+        case "$target" in
+            ip\ *)
+                ip=${target#ip }
+                valid_ipv4 "$ip" && echo "$ip"
+                ;;
+        esac
+    done
+}
+
+mac_target_online() {
+    local mac=$1
+    local ip
+
+    for ip in $(list_ips_by_mac "$mac" | sort -u); do
+        ip_is_online "$ip" && return 0
+    done
+
+    return 1
+}
+
+device_is_online() {
+    local id=$1
+    local target_key table target
+
+    target_key=$(get_target_key_by_id "$id") || return 1
+    set -- $target_key
+    table=$1
+    target=$2
+
+    case "$table" in
+        ip)
+            ip_target_online "$target"
+            ;;
+        bridge)
+            mac_target_online "$target"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+target_key_is_online() {
+    local target_key=$1
+    local table target
+
+    set -- $target_key
+    table=$1
+    target=$2
+
+    case "$table" in
+        ip)
+            ip_target_online "$target"
+            ;;
+        bridge)
+            mac_target_online "$target"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+cycle_target_should_block() {
+    local state_id=$1
+    local target_key=$2
+    local watch_limit=$3
+    local rest_limit=$4
+    local signature state_file stored_signature
+    local current_tick last_tick elapsed mode watch_used rest_left offline_minutes
+
+    if ! valid_minutes "$watch_limit" || ! valid_minutes "$rest_limit"; then
+        reset_loop_state "$state_id"
+        return 1
+    fi
+
+    signature=$(loop_signature "$target_key" "$watch_limit" "$rest_limit")
+    current_tick=$(current_minute_tick)
+
+    ensure_loop_state_dir
+    state_file=$(loop_state_file "$state_id")
+    stored_signature=$(loop_state_get "$state_file" signature "")
+
+    if [ "$stored_signature" = "$signature" ]; then
+        mode=$(loop_state_get "$state_file" mode "watch")
+        watch_used=$(sanitize_counter "$(loop_state_get "$state_file" watch_used "0")")
+        rest_left=$(sanitize_counter "$(loop_state_get "$state_file" rest_left "0")")
+        offline_minutes=$(sanitize_counter "$(loop_state_get "$state_file" offline_minutes "0")")
+        last_tick=$(sanitize_counter "$(loop_state_get "$state_file" last_tick "$current_tick")")
+    else
+        mode="watch"
+        watch_used=0
+        rest_left=0
+        offline_minutes=0
+        last_tick=$current_tick
+    fi
+
+    case "$mode" in
+        watch|rest) ;;
+        *) mode="watch" ;;
+    esac
+
+    elapsed=$((current_tick - last_tick))
+    [ "$elapsed" -lt 0 ] && elapsed=0
+
+    if [ "$mode" = "rest" ]; then
+        if [ "$elapsed" -gt 0 ]; then
+            if [ "$elapsed" -ge "$rest_left" ]; then
+                mode="watch"
+                watch_used=0
+                rest_left=0
+                offline_minutes=0
+            else
+                rest_left=$((rest_left - elapsed))
+            fi
+        fi
+
+        save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
+        [ "$mode" = "rest" ] && [ "$rest_left" -gt 0 ]
+        return $?
+    fi
+
+    if target_key_is_online "$target_key"; then
+        offline_minutes=0
+
+        if [ "$elapsed" -gt 0 ]; then
+            watch_used=$((watch_used + elapsed))
+        fi
+
+        if [ "$watch_used" -ge "$watch_limit" ]; then
+            mode="rest"
+            watch_used=0
+            rest_left=$rest_limit
+            offline_minutes=0
+            dbg "Target $target_key reached viewing limit, resting for ${rest_limit}m"
+            save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
+            return 0
+        fi
+    else
+        if [ "$elapsed" -gt 0 ]; then
+            offline_minutes=$((offline_minutes + elapsed))
+
+            if [ "$offline_minutes" -ge "$rest_limit" ]; then
+                [ "$watch_used" -gt 0 ] && dbg "Target $target_key offline rest reached, viewing counter reset"
+                watch_used=0
+                offline_minutes=$rest_limit
+            fi
+        fi
+    fi
+
+    save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
+    return 1
+}
+
+cycle_should_block() {
+    local id=$1
+    local watch_limit rest_limit target_key
+
+    watch_limit=$(config_t_get device watchtime "$id" "0")
+    rest_limit=$(config_t_get device resttime "$id" "0")
+    target_key=$(get_target_key_by_id "$id") || return 1
+
+    cycle_target_should_block "$id" "$target_key" "$watch_limit" "$rest_limit"
+}
+
+ip_target_to_bounds() {
+    local target=$1
+    local start_ip end_ip ip mask
+    local start_num end_num ip_num netmask hostmask
+
+    if valid_ipv4 "$target"; then
+        ip_num=$(ip_to_int "$target")
+        echo "$ip_num $ip_num"
+        return 0
+    fi
+
+    case "$target" in
+    *-*)
+        start_ip=${target%-*}
+        end_ip=${target#*-}
+
+        valid_ipv4 "$start_ip" || return 1
+        valid_ipv4 "$end_ip" || return 1
+
+        start_num=$(ip_to_int "$start_ip")
+        end_num=$(ip_to_int "$end_ip")
+
+        [ "$start_num" -le "$end_num" ] || return 1
+        echo "$start_num $end_num"
+        return 0
+        ;;
+    esac
+
+    case "$target" in
+    */*)
+        ip=${target%/*}
+        mask=${target#*/}
+
+        valid_ipv4 "$ip" || return 1
+        case "$mask" in
+            ''|*[!0-9]*)
+                return 1
+                ;;
+        esac
+        mask=$(to_dec "$mask")
+        [ "$mask" -le 32 ] || return 1
+
+        ip_num=$(ip_to_int "$ip")
+        if [ "$mask" -eq 0 ]; then
+            netmask=0
+        else
+            netmask=$(( (0xffffffff << (32 - mask)) & 0xffffffff ))
+        fi
+        hostmask=$(( 0xffffffff ^ netmask ))
+        start_num=$(( ip_num & netmask ))
+        end_num=$(( start_num | hostmask ))
+
+        echo "$start_num $end_num"
+        return 0
+        ;;
+    esac
+
+    return 1
+}
+
+valid_mac() {
+    local mac=$1
+    local old_ifs part
+
+    case "$mac" in
+        ''|*[!0-9a-fA-F:]*|:*|*:|*::*)
+            return 1
+            ;;
+    esac
+
+    old_ifs=$IFS
+    IFS=:
+    set -- $mac
+    IFS=$old_ifs
+    [ "$#" -eq 6 ] || return 1
+
+    for part in "$@"; do
+        case "$part" in
+            [0-9a-fA-F][0-9a-fA-F])
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done
+
+    return 0
+}
+
+get_target_info() {
+    local target=$1
+    local start_ip end_ip ip mask mac
+    local start_num end_num
+
+    if valid_ipv4 "$target"; then
+        echo "ip $target"
+        return 0
+    fi
+
+    case "$target" in
+    *-*)
+        start_ip=${target%-*}
+        end_ip=${target#*-}
+
+        valid_ipv4 "$start_ip" || return 1
+        valid_ipv4 "$end_ip" || return 1
+
+        start_num=$(ip_to_int "$start_ip")
+        end_num=$(ip_to_int "$end_ip")
+
+        [ "$start_num" -le "$end_num" ] || return 1
+
+        if [ "$start_num" -eq "$end_num" ]; then
+            echo "ip $start_ip"
+        else
+            echo "ip $target"
+        fi
+
+        return 0
+        ;;
+    esac
+
+    case "$target" in
+    */*)
+        ip=${target%/*}
+        mask=${target#*/}
+
+        valid_ipv4 "$ip" || return 1
+        case "$mask" in
+            ''|*[!0-9]*)
+                return 1
+                ;;
+        esac
+        mask=$(to_dec "$mask")
+        [ "$mask" -le 32 ] || return 1
+
+        echo "ip ${ip}/${mask}"
+        return 0
+        ;;
+    esac
+
+    if valid_mac "$target"; then
+        mac=$(echo "$target" | tr '[:upper:]' '[:lower:]')
+        echo "bridge $mac"
+        return 0
+    fi
+
+    return 1
+}
+
+nft_table_exists() {
+    nft list table "$1" "$2" >/dev/null 2>&1
+}
+
+nft_chain_exists() {
+    nft list chain "$1" "$2" "$3" >/dev/null 2>&1
+}
+
+nft_set_exists() {
+    nft list set "$1" "$2" "$3" >/dev/null 2>&1
+}
+
+nft_rule_exists() {
+    local family=$1
+    local table=$2
+    local chain=$3
+    local expr=$4
+
+    nft -a list chain "$family" "$table" "$chain" | grep -Fq "$expr"
+}
+
+add_nft_rule_once() {
+    local family=$1
+    local chain=$2
+    local expr=$3
+
+    nft_rule_exists "$family" "$NFT_TABLE" "$chain" "$expr drop" || \
+        nft add rule "$family" "$NFT_TABLE" "$chain" $expr drop
+}
+
+stop_timecontrol() {
+    nft_table_exists ip "$NFT_TABLE" && nft delete table ip "$NFT_TABLE"
+    nft_table_exists bridge "$NFT_TABLE" && nft delete table bridge "$NFT_TABLE"
+    dbg "Deleted nftables table: $NFT_TABLE"
+
+    : > "$IDLIST"
+    : > "$TARGETLIST"
+    clear_loop_states
+}
+
+init_timecontrol() {
+    nft_table_exists ip "$NFT_TABLE" || nft add table ip "$NFT_TABLE"
+    nft_set_exists ip "$NFT_TABLE" "$NFT_IP_SET" || \
+        nft add set ip "$NFT_TABLE" "$NFT_IP_SET" "{ type ipv4_addr; flags interval; }"
+
+    nft_chain_exists ip "$NFT_TABLE" input || \
+        nft add chain ip "$NFT_TABLE" input "{ type filter hook input priority -100; policy accept; }"
+    nft_chain_exists ip "$NFT_TABLE" forward || \
+        nft add chain ip "$NFT_TABLE" forward "{ type filter hook forward priority -100; policy accept; }"
+
+    add_nft_rule_once ip input "ip saddr @$NFT_IP_SET"
+    add_nft_rule_once ip input "ip daddr @$NFT_IP_SET"
+    add_nft_rule_once ip forward "ip saddr @$NFT_IP_SET"
+    add_nft_rule_once ip forward "ip daddr @$NFT_IP_SET"
+
+    nft_table_exists bridge "$NFT_TABLE" || nft add table bridge "$NFT_TABLE"
+    nft_set_exists bridge "$NFT_TABLE" "$NFT_BRIDGE_SET" || \
+        nft add set bridge "$NFT_TABLE" "$NFT_BRIDGE_SET" "{ type ether_addr; }"
+
+    nft_chain_exists bridge "$NFT_TABLE" prerouting || \
+        nft add chain bridge "$NFT_TABLE" prerouting "{ type filter hook prerouting priority -300; policy accept; }"
+    nft_chain_exists bridge "$NFT_TABLE" input || \
+        nft add chain bridge "$NFT_TABLE" input "{ type filter hook input priority -100; policy accept; }"
+    nft_chain_exists bridge "$NFT_TABLE" forward || \
+        nft add chain bridge "$NFT_TABLE" forward "{ type filter hook forward priority -100; policy accept; }"
+
+    add_nft_rule_once bridge prerouting "ether saddr @$NFT_BRIDGE_SET"
+    add_nft_rule_once bridge prerouting "ether daddr @$NFT_BRIDGE_SET"
+    add_nft_rule_once bridge input "ether saddr @$NFT_BRIDGE_SET"
+    add_nft_rule_once bridge input "ether daddr @$NFT_BRIDGE_SET"
+    add_nft_rule_once bridge forward "ether saddr @$NFT_BRIDGE_SET"
+    add_nft_rule_once bridge forward "ether daddr @$NFT_BRIDGE_SET"
+}
+
+add_target() {
+    local table=$1
+    local target=$2
+
+    case "$table" in
+        ip)
+            nft add element ip "$NFT_TABLE" "$NFT_IP_SET" "{ $target }" || true
+            ;;
+        bridge)
+            nft add element bridge "$NFT_TABLE" "$NFT_BRIDGE_SET" "{ $target }" || true
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    dbg "Added $target to nft blacklist table $table"
+    return 0
+}
+
+del_target() {
+    local table=$1
+    local target=$2
+
+    case "$table" in
+        ip)
+            nft delete element ip "$NFT_TABLE" "$NFT_IP_SET" "{ $target }"
+            ;;
+        bridge)
+            nft delete element bridge "$NFT_TABLE" "$NFT_BRIDGE_SET" "{ $target }"
+            ;;
+    esac
+
+    dbg "Removed $target from nft blacklist table $table"
+    return 0
+}
+
+get_target_key_by_id() {
+    local id=$1
+    local target target_info table
+
+    target=$(config_t_get device mac "$id" "")
+    [ -z "$target" ] && return 1
+
+    target_info=$(get_target_info "$target") || {
+        dbg "Invalid target: $target"
+        return 1
+    }
+
+    set -- $target_info
+    table=$1
+    target=$2
+    printf '%s %s\n' "$table" "$target"
+}
+
+timeadd() {
+    local id=$1
+    local target_key table target
+
+    target_key=$(get_target_key_by_id "$id") || return 1
+    set -- $target_key
+    table=$1
+    target=$2
+
+    add_target "$table" "$target"
+}
+
+timedel() {
+    local id=$1
+    local target_key table target
+
+    target_key=$(get_target_key_by_id "$id") || return 1
+    set -- $target_key
+    table=$1
+    target=$2
+
+    del_target "$table" "$target"
+}
+
+valid_time() {
+    case "$1" in
+        [01][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+time_to_minutes() {
+    local hour minute
+
+    hour=${1%%:*}
+    minute=${1#*:}
+    hour=$(to_dec "$hour")
+    minute=$(to_dec "$minute")
+
+    echo $((hour * 60 + minute))
+}
+
+check_time() {
+    local start=$1
+    local end=$2
+    local current
+    local start_min end_min current_min
+
+    valid_time "$start" || return 1
+    valid_time "$end" || return 1
+
+    current=$(date +%H:%M)
+
+    start_min=$(time_to_minutes "$start")
+    end_min=$(time_to_minutes "$end")
+    current_min=$(time_to_minutes "$current")
+
+    [ "$start_min" -lt "$end_min" ] || return 1
+    [ "$current_min" -ge "$start_min" ] && [ "$current_min" -lt "$end_min" ]
+}
+
+cycle_mode_applies() {
+    local i=$1
+    local start_time end_time wweek current_weekday
+
+    start_time=$(config_t_get device timestart "$i" "00:00")
+    end_time=$(config_t_get device timeend "$i" "00:00")
+    wweek=$(config_t_get device week "$i" "0")
+    current_weekday=$(date +%u)
+
+    if [ "$wweek" != "0" ]; then
+        echo "$wweek" | grep -qw "$current_weekday" || return 1
+    fi
+
+    valid_time "$start_time" || return 1
+    valid_time "$end_time" || return 1
+    [ "$start_time" = "$end_time" ]
+}
+
+sync_ip_cycle_targets() {
+    local id=$1
+    local target=$2
+    local output=$3
+    local watch_limit rest_limit ip ip_num blocked
+
+    watch_limit=$(config_t_get device watchtime "$id" "0")
+    rest_limit=$(config_t_get device resttime "$id" "0")
+    blocked=1
+
+    if ! valid_minutes "$watch_limit" || ! valid_minutes "$rest_limit"; then
+        reset_loop_states_for_id "$id"
+        return 1
+    fi
+
+    for ip in $({ list_known_ips_in_target "$target"; list_tracked_ips_for_id "$id"; } | sort -u); do
+        ip_target_contains_ip "$target" "$ip" || continue
+
+        if cycle_target_should_block "${id}_ip_${ip}" "ip $ip" "$watch_limit" "$rest_limit"; then
+            ip_num=$(ip_to_int "$ip")
+            echo "$ip_num $ip_num" >> "$output"
+            blocked=0
+        fi
+    done
+
+    return "$blocked"
+}
+
+check_list() {
+    local i=$1
+    local start_time end_time wweek current_weekday
+
+    start_time=$(config_t_get device timestart "$i" "00:00")
+    end_time=$(config_t_get device timeend "$i" "00:00")
+    wweek=$(config_t_get device week "$i" "0")
+    current_weekday=$(date +%u)
+
+    if [ "$wweek" != "0" ]; then
+        echo "$wweek" | grep -qw "$current_weekday" || return 1
+    fi
+
+    valid_time "$start_time" || return 1
+    valid_time "$end_time" || return 1
+
+    if [ "$start_time" = "$end_time" ]; then
+        cycle_should_block "$i"
+        return $?
+    fi
+
+    reset_loop_states_for_id "$i"
+    check_time "$start_time" "$end_time"
+}
+
+dedupe_file() {
+    local file=$1
+    local sorted="${file}.sorted"
+
+    sort -u "$file" > "$sorted" && mv "$sorted" "$file"
+}
+
+emit_ip_target() {
+    local start=$1
+    local end=$2
+    local size max_size remaining prefix
+
+    while [ "$start" -le "$end" ]; do
+        if [ "$start" -eq 0 ]; then
+            max_size=4294967296
+        else
+            max_size=$((start & -start))
+        fi
+
+        remaining=$((end - start + 1))
+        while [ "$max_size" -gt "$remaining" ]; do
+            max_size=$((max_size / 2))
+        done
+
+        size=$max_size
+        prefix=32
+        while [ "$size" -gt 1 ]; do
+            size=$((size / 2))
+            prefix=$((prefix - 1))
+        done
+
+        if [ "$prefix" -eq 32 ]; then
+            echo "!ip $(int_to_ip "$start")!"
+        else
+            echo "!ip $(int_to_ip "$start")/$prefix!"
+        fi
+
+        start=$((start + max_size))
+    done
+}
+
+merge_ip_targets() {
+    local input=$1
+    local output=$2
+    local sorted="${input}.sorted"
+    local start end current_start current_end next_end
+
+    sort -n -k1,1 -k2,2 "$input" > "$sorted"
+    : > "$output"
+
+    while read -r start end; do
+        [ -n "$start" ] || continue
+
+        if [ -z "$current_start" ]; then
+            current_start=$start
+            current_end=$end
+            continue
+        fi
+
+        next_end=$((current_end + 1))
+        if [ "$start" -le "$next_end" ]; then
+            [ "$end" -gt "$current_end" ] && current_end=$end
+        else
+            emit_ip_target "$current_start" "$current_end" >> "$output"
+            current_start=$start
+            current_end=$end
+        fi
+    done < "$sorted"
+
+    if [ -n "$current_start" ]; then
+        emit_ip_target "$current_start" "$current_end" >> "$output"
+    fi
+
+    rm -f "$sorted"
+}
+
+sync_timecontrol() {
+    local id target_key table target line desired_targets desired_ids desired_ranges desired_bridge
+    local bounds start_num end_num
+
+    if ! is_enabled; then
+        stop_timecontrol
+        return 0
+    fi
+
+    init_timecontrol
+    ensure_idlist
+    ensure_targetlist
+
+    desired_targets=$(mktemp "/tmp/${NAME}.targets.XXXXXX") || return 1
+    desired_ids=$(mktemp "/tmp/${NAME}.ids.XXXXXX") || {
+        rm -f "$desired_targets"
+        return 1
+    }
+    desired_ranges=$(mktemp "/tmp/${NAME}.ranges.XXXXXX") || {
+        rm -f "$desired_targets" "$desired_ids"
+        return 1
+    }
+    desired_bridge=$(mktemp "/tmp/${NAME}.bridge.XXXXXX") || {
+        rm -f "$desired_targets" "$desired_ids" "$desired_ranges"
+        return 1
+    }
+
+    for id in $(get_enabled_device_ids); do
+        target_key=$(get_target_key_by_id "$id") || continue
+
+        set -- $target_key
+        table=$1
+        target=$2
+
+        if cycle_mode_applies "$id" && [ "$table" = "ip" ] && ! valid_ipv4 "$target"; then
+            if sync_ip_cycle_targets "$id" "$target" "$desired_ranges"; then
+                echo "!$id!" >> "$desired_ids"
+            fi
+            continue
+        fi
+
+        if ! check_list "$id"; then
+            continue
+        fi
+
+        case "$table" in
+            ip)
+                bounds=$(ip_target_to_bounds "$target") || continue
+                set -- $bounds
+                start_num=$1
+                end_num=$2
+                echo "$start_num $end_num" >> "$desired_ranges"
+                echo "!$id!" >> "$desired_ids"
+                ;;
+            bridge)
+                echo "!$target_key!" >> "$desired_bridge"
+                echo "!$id!" >> "$desired_ids"
+                ;;
+        esac
+    done
+
+    merge_ip_targets "$desired_ranges" "$desired_targets"
+    sort -u "$desired_bridge" >> "$desired_targets"
+    dedupe_file "$desired_targets"
+    dedupe_file "$desired_ids"
+
+    while IFS= read -r line; do
+        target_key=${line#!}
+        target_key=${target_key%!}
+        [ -n "$target_key" ] || continue
+
+        if ! grep -Fxq "$line" "$desired_targets" 2>/dev/null; then
+            set -- $target_key
+            table=$1
+            target=$2
+            del_target "$table" "$target"
+        fi
+    done < "$TARGETLIST"
+
+    while IFS= read -r line; do
+        target_key=${line#!}
+        target_key=${target_key%!}
+        [ -n "$target_key" ] || continue
+
+        set -- $target_key
+        table=$1
+        target=$2
+        add_target "$table" "$target"
+    done < "$desired_targets"
+
+    cp "$desired_targets" "$TARGETLIST"
+    cp "$desired_ids" "$IDLIST"
+    rm -f "$desired_targets" "$desired_ids" "$desired_ranges" "$desired_bridge" \
+        "${desired_targets}.sorted" "${desired_ids}.sorted" "${desired_ranges}.sorted"
+
+    dbg "Time control synced with $(wc -l < "$TARGETLIST") targets"
+}
+
+lock_instance
+ensure_idlist
+ensure_targetlist
+
+case "$crrun" in
+    "stop")
+        stop_timecontrol
+        ;;
+
+    "start")
+        if ! is_enabled; then
+            stop_timecontrol >/dev/null 2>&1
+            exit 0
+        fi
+
+        stop_timecontrol
+        sync_timecontrol
+        dbg "Time control started with $(wc -l < "$TARGETLIST") targets"
+        ;;
+
+    "sync")
+        sync_timecontrol
+        ;;
+
+    "add")
+        is_enabled || exit 0
+
+        sync_timecontrol
+        ;;
+
+    "del")
+        sync_timecontrol
+        ;;
+
+    *)
+        dbg "Invalid command: $crrun"
+        exit 1
+        ;;
+esac
