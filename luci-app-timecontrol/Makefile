@@ -8,14 +8,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-timecontrol
-PKG_VERSION:=2.0
+PKG_VERSION:=1.0
 PKG_RELEASE:=20260527
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=sirpdboy <herboy2008@gmail.com>
 
 LUCI_TITLE:=LuCI support for Internet time control
 LUCI_DESCRIPTION:=LuCI support for Internet time control based on nftables.
-LUCI_DEPENDS:=+bash +nftables
+LUCI_DEPENDS:=+nftables +kmod-nft-bridge
 LUCI_PKGARCH:=all
 
 define Package/$(PKG_NAME)/conffiles
