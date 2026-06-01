@@ -86,8 +86,12 @@ ensure_loop_state_dir() {
     [ -d "$LOOP_STATE_DIR" ] || mkdir -p "$LOOP_STATE_DIR"
 }
 
+safe_state_key() {
+    printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'
+}
+
 loop_state_file() {
-    echo "$LOOP_STATE_DIR/device_$1.state"
+    echo "$LOOP_STATE_DIR/device_$(safe_state_key "$1").state"
 }
 
 clear_loop_states() {
@@ -261,6 +265,7 @@ save_loop_state() {
     file=$(loop_state_file "$id")
 
     {
+        echo "target_key=${signature%%|*}"
         echo "signature=$signature"
         echo "mode=$mode"
         echo "watch_used=$watch_used"
@@ -272,6 +277,16 @@ save_loop_state() {
 
 reset_loop_state() {
     rm -f "$(loop_state_file "$1")"
+}
+
+reset_loop_states_for_id() {
+    local id=$1
+    local file
+
+    reset_loop_state "$id"
+    for file in "$LOOP_STATE_DIR"/device_"$(safe_state_key "$id")"_*.state; do
+        [ -f "$file" ] && rm -f "$file"
+    done
 }
 
 list_known_ipv4s() {
@@ -346,6 +361,48 @@ ip_target_online() {
     return 1
 }
 
+ip_target_contains_ip() {
+    local target=$1
+    local ip=$2
+    local bounds start_num end_num ip_num
+
+    valid_ipv4 "$ip" || return 1
+
+    bounds=$(ip_target_to_bounds "$target") || return 1
+    set -- $bounds
+    start_num=$1
+    end_num=$2
+    ip_num=$(ip_to_int "$ip")
+
+    [ "$ip_num" -ge "$start_num" ] && [ "$ip_num" -le "$end_num" ]
+}
+
+list_known_ips_in_target() {
+    local target=$1
+    local ip
+
+    for ip in $(list_known_ipv4s | sort -u); do
+        ip_target_contains_ip "$target" "$ip" && echo "$ip"
+    done
+}
+
+list_tracked_ips_for_id() {
+    local id=$1
+    local file target ip
+
+    for file in "$LOOP_STATE_DIR"/device_"$(safe_state_key "$id")"_ip_*.state; do
+        [ -f "$file" ] || continue
+        target=$(loop_state_get "$file" target_key "")
+
+        case "$target" in
+            ip\ *)
+                ip=${target#ip }
+                valid_ipv4 "$ip" && echo "$ip"
+                ;;
+        esac
+    done
+}
+
 mac_target_online() {
     local mac=$1
     local ip
@@ -379,25 +436,45 @@ device_is_online() {
     esac
 }
 
-cycle_should_block() {
-    local id=$1
-    local watch_limit rest_limit target_key signature state_file stored_signature
+target_key_is_online() {
+    local target_key=$1
+    local table target
+
+    set -- $target_key
+    table=$1
+    target=$2
+
+    case "$table" in
+        ip)
+            ip_target_online "$target"
+            ;;
+        bridge)
+            mac_target_online "$target"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+cycle_target_should_block() {
+    local state_id=$1
+    local target_key=$2
+    local watch_limit=$3
+    local rest_limit=$4
+    local signature state_file stored_signature
     local current_tick last_tick elapsed mode watch_used rest_left offline_minutes
 
-    watch_limit=$(config_t_get device watchtime "$id" "0")
-    rest_limit=$(config_t_get device resttime "$id" "0")
-
     if ! valid_minutes "$watch_limit" || ! valid_minutes "$rest_limit"; then
-        reset_loop_state "$id"
+        reset_loop_state "$state_id"
         return 1
     fi
 
-    target_key=$(get_target_key_by_id "$id") || return 1
     signature=$(loop_signature "$target_key" "$watch_limit" "$rest_limit")
     current_tick=$(current_minute_tick)
 
     ensure_loop_state_dir
-    state_file=$(loop_state_file "$id")
+    state_file=$(loop_state_file "$state_id")
     stored_signature=$(loop_state_get "$state_file" signature "")
 
     if [ "$stored_signature" = "$signature" ]; then
@@ -434,12 +511,12 @@ cycle_should_block() {
             fi
         fi
 
-        save_loop_state "$id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
+        save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
         [ "$mode" = "rest" ] && [ "$rest_left" -gt 0 ]
         return $?
     fi
 
-    if device_is_online "$id"; then
+    if target_key_is_online "$target_key"; then
         offline_minutes=0
 
         if [ "$elapsed" -gt 0 ]; then
@@ -451,8 +528,8 @@ cycle_should_block() {
             watch_used=0
             rest_left=$rest_limit
             offline_minutes=0
-            dbg "Device $id reached viewing limit, resting for ${rest_limit}m"
-            save_loop_state "$id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
+            dbg "Target $target_key reached viewing limit, resting for ${rest_limit}m"
+            save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
             return 0
         fi
     else
@@ -460,15 +537,26 @@ cycle_should_block() {
             offline_minutes=$((offline_minutes + elapsed))
 
             if [ "$offline_minutes" -ge "$rest_limit" ]; then
-                [ "$watch_used" -gt 0 ] && dbg "Device $id offline rest reached, viewing counter reset"
+                [ "$watch_used" -gt 0 ] && dbg "Target $target_key offline rest reached, viewing counter reset"
                 watch_used=0
                 offline_minutes=$rest_limit
             fi
         fi
     fi
 
-    save_loop_state "$id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
+    save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
     return 1
+}
+
+cycle_should_block() {
+    local id=$1
+    local watch_limit rest_limit target_key
+
+    watch_limit=$(config_t_get device watchtime "$id" "0")
+    rest_limit=$(config_t_get device resttime "$id" "0")
+    target_key=$(get_target_key_by_id "$id") || return 1
+
+    cycle_target_should_block "$id" "$target_key" "$watch_limit" "$rest_limit"
 }
 
 ip_target_to_bounds() {
@@ -814,6 +902,52 @@ check_time() {
     [ "$current_min" -ge "$start_min" ] && [ "$current_min" -lt "$end_min" ]
 }
 
+cycle_mode_applies() {
+    local i=$1
+    local start_time end_time wweek current_weekday
+
+    start_time=$(config_t_get device timestart "$i" "00:00")
+    end_time=$(config_t_get device timeend "$i" "00:00")
+    wweek=$(config_t_get device week "$i" "0")
+    current_weekday=$(date +%u)
+
+    if [ "$wweek" != "0" ]; then
+        echo "$wweek" | grep -qw "$current_weekday" || return 1
+    fi
+
+    valid_time "$start_time" || return 1
+    valid_time "$end_time" || return 1
+    [ "$start_time" = "$end_time" ]
+}
+
+sync_ip_cycle_targets() {
+    local id=$1
+    local target=$2
+    local output=$3
+    local watch_limit rest_limit ip ip_num blocked
+
+    watch_limit=$(config_t_get device watchtime "$id" "0")
+    rest_limit=$(config_t_get device resttime "$id" "0")
+    blocked=1
+
+    if ! valid_minutes "$watch_limit" || ! valid_minutes "$rest_limit"; then
+        reset_loop_states_for_id "$id"
+        return 1
+    fi
+
+    for ip in $({ list_known_ips_in_target "$target"; list_tracked_ips_for_id "$id"; } | sort -u); do
+        ip_target_contains_ip "$target" "$ip" || continue
+
+        if cycle_target_should_block "${id}_ip_${ip}" "ip $ip" "$watch_limit" "$rest_limit"; then
+            ip_num=$(ip_to_int "$ip")
+            echo "$ip_num $ip_num" >> "$output"
+            blocked=0
+        fi
+    done
+
+    return "$blocked"
+}
+
 check_list() {
     local i=$1
     local start_time end_time wweek current_weekday
@@ -835,7 +969,7 @@ check_list() {
         return $?
     fi
 
-    reset_loop_state "$i"
+    reset_loop_states_for_id "$i"
     check_time "$start_time" "$end_time"
 }
 
@@ -943,27 +1077,37 @@ sync_timecontrol() {
     }
 
     for id in $(get_enabled_device_ids); do
-        if check_list "$id"; then
-            target_key=$(get_target_key_by_id "$id") || continue
+        target_key=$(get_target_key_by_id "$id") || continue
 
-            set -- $target_key
-            table=$1
-            target=$2
-            case "$table" in
-                ip)
-                    bounds=$(ip_target_to_bounds "$target") || continue
-                    set -- $bounds
-                    start_num=$1
-                    end_num=$2
-                    echo "$start_num $end_num" >> "$desired_ranges"
-                    echo "!$id!" >> "$desired_ids"
-                    ;;
-                bridge)
-                    echo "!$target_key!" >> "$desired_bridge"
-                    echo "!$id!" >> "$desired_ids"
-                    ;;
-            esac
+        set -- $target_key
+        table=$1
+        target=$2
+
+        if cycle_mode_applies "$id" && [ "$table" = "ip" ] && ! valid_ipv4 "$target"; then
+            if sync_ip_cycle_targets "$id" "$target" "$desired_ranges"; then
+                echo "!$id!" >> "$desired_ids"
+            fi
+            continue
         fi
+
+        if ! check_list "$id"; then
+            continue
+        fi
+
+        case "$table" in
+            ip)
+                bounds=$(ip_target_to_bounds "$target") || continue
+                set -- $bounds
+                start_num=$1
+                end_num=$2
+                echo "$start_num $end_num" >> "$desired_ranges"
+                echo "!$id!" >> "$desired_ids"
+                ;;
+            bridge)
+                echo "!$target_key!" >> "$desired_bridge"
+                echo "!$id!" >> "$desired_ids"
+                ;;
+        esac
     done
 
     merge_ip_targets "$desired_ranges" "$desired_targets"
