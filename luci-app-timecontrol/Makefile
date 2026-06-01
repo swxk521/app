@@ -15,7 +15,7 @@ PKG_MAINTAINER:=sirpdboy <herboy2008@gmail.com>
 
 LUCI_TITLE:=LuCI support for Internet time control
 LUCI_DESCRIPTION:=LuCI support for Internet time control based on nftables.
-LUCI_DEPENDS:=+nftables +kmod-nft-bridge
+LUCI_DEPENDS:=+nftables
 LUCI_PKGARCH:=all
 
 define Package/$(PKG_NAME)/conffiles
