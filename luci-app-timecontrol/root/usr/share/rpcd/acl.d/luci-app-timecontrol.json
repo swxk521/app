@@ -1,0 +1,19 @@
+{
+	"luci-app-timecontrol": {
+		"description": "Grant UCI Internet time control for luci-app-timecontrol",
+		"read": {
+			"cgi-io": [ "exec" ],
+			"file": {
+				"/bin/busybox ps -w": [ "exec" ]
+			},
+			"ubus": {
+				"file": [ "exec" ],
+				"luci-rpc": [ "getHostHints" ]
+			},
+			"uci": [ "timecontrol" ]
+		},
+		"write": {
+			"uci": [ "timecontrol" ]
+		}
+	}
+}

@@ -1,0 +1,577 @@
+#!/bin/sh
+
+# Copyright (C) 2006 OpenWrt.org
+# Copyright 2022-2025 sirpdboy <herboy2008@gmail.com>
+
+crrun=$1
+crid=$2
+NAME=eqosplus
+IDLIST="/var/$NAME.idlist"
+LOCK="/var/lock/$NAME.lock"
+TMPID="/var/$NAME.tmpid"
+LOG="/var/$NAME_log.log"
+
+dev=br-lan
+bin_nft=$(command -v nft 2>/dev/null || echo nft)
+bin_tc=$(command -v tc 2>/dev/null || echo tc)
+bin_ip=$(command -v ip 2>/dev/null || echo ip)
+DEBUG=1
+
+nft_type() {
+    if command -v nft >/dev/null 2>&1; then
+        nftables_ver="true"
+    fi
+}
+
+dbg_nft() {
+    [ "${DEBUG:-0}" -eq 0 ] || echo "DEBUG: nft $*"
+    "$bin_nft" "$@"
+}
+
+dbg_tc() {
+    [ "${DEBUG:-0}" -eq 0 ] || echo "DEBUG: tc $*"
+    "$bin_tc" "$@"
+}
+
+dbg_ip() {
+    [ "${DEBUG:-0}" -eq 0 ] || echo "DEBUG: ip $*"
+    "$bin_ip" "$@"
+}
+
+tc="dbg_tc"
+ip="dbg_ip"
+nft="dbg_nft"
+
+nft_type
+
+is_enabled() {
+    [ "$(uci -q get "$NAME.@eqosplus[0].enabled" 2>/dev/null)" = "1" ]
+}
+
+is_macaddr() {
+    echo "$1" | grep -qE '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
+}
+
+normalize_mac() {
+    printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+is_ip_range() {
+    echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}-([0-9]{1,3}\.){3}[0-9]{1,3}$'
+}
+
+strip_spaces() {
+    printf '%s' "$1" | tr -d '[:space:]'
+}
+
+ip_to_cidrs() {
+    local raw
+
+    raw=$(strip_spaces "$1")
+
+    if is_ip_range "$raw"; then
+        awk -v range="$raw" '
+        function valid_ip(ip, a, i, n) {
+            n = split(ip, a, ".")
+            if (n != 4) return 0
+            for (i = 1; i <= 4; i++) {
+                if (a[i] !~ /^[0-9]+$/ || a[i] < 0 || a[i] > 255) return 0
+            }
+            return 1
+        }
+        function ip2int(ip, a) {
+            split(ip, a, ".")
+            return (((a[1] * 256 + a[2]) * 256 + a[3]) * 256 + a[4])
+        }
+        function int2ip(n, o1, o2, o3, o4) {
+            o1 = int(n / 16777216) % 256
+            o2 = int(n / 65536) % 256
+            o3 = int(n / 256) % 256
+            o4 = int(n) % 256
+            return o1 "." o2 "." o3 "." o4
+        }
+        function log2(n, c) {
+            c = 0
+            while (n > 1) {
+                n /= 2
+                c++
+            }
+            return c
+        }
+        BEGIN {
+            split(range, r, "-")
+            if (!valid_ip(r[1]) || !valid_ip(r[2])) exit 1
+
+            s = ip2int(r[1])
+            e = ip2int(r[2])
+
+            if (s > e) {
+                t = s
+                s = e
+                e = t
+            }
+
+            while (s <= e) {
+                block = 1
+                while ((s % (block * 2)) == 0 && block < 2147483648) block *= 2
+
+                remain = e - s + 1
+                while (block > remain) block /= 2
+
+                prefix = 32 - log2(block)
+                print int2ip(s) "/" prefix
+                s += block
+            }
+        }'
+    elif echo "$raw" | grep -q '/'; then
+        echo "$raw"
+    else
+        echo "$raw/32"
+    fi
+}
+
+is_gt_zero() {
+    local value="${1:-0}"
+    awk -v v="$value" 'BEGIN { exit !((v + 0) > 0) }' 2>/dev/null
+}
+
+to_kbit() {
+    local mb="${1:-0}"
+    awk -v mb="$mb" 'BEGIN { printf "%d\n", (mb + 0) * 8192 }' 2>/dev/null || echo "0"
+}
+
+get_lan_ingress_ifaces() {
+    local p face found=0
+
+    if [ -d "/sys/class/net/${dev}/brif" ]; then
+        for p in /sys/class/net/${dev}/brif/*; do
+            [ -e "$p" ] || continue
+            face="${p##*/}"
+            [ "$face" = "${dev}_ifb" ] && continue
+            echo "$face"
+            found=1
+        done
+    fi
+
+    [ "$found" -eq 1 ] || echo "$dev"
+}
+
+delete_nft_rules_by_id() {
+    local id=$1
+    local chain handle
+
+    [ -n "$nftables_ver" ] || return 0
+
+    for chain in mark_forward mark_output mark_postrouting; do
+        for handle in $(
+            "$bin_nft" -a list chain inet "$NAME" "$chain" 2>/dev/null |
+                awk -v tag="eqosplus-$id" '$0 ~ tag { for (i = 1; i <= NF; i++) if ($i == "handle") print $(i + 1) }'
+        ); do
+            $nft delete rule inet "$NAME" "$chain" handle "$handle" 2>/dev/null
+        done
+    done
+}
+
+stop_qos() {
+    local face
+
+    $tc qdisc del dev "$dev" root 2>/dev/null
+    $tc qdisc del dev "${dev}_ifb" root 2>/dev/null
+
+    $tc qdisc del dev "$dev" ingress 2>/dev/null
+    for face in $(get_lan_ingress_ifaces); do
+        $tc qdisc del dev "$face" ingress 2>/dev/null
+    done
+
+    $ip link del dev "${dev}_ifb" 2>/dev/null
+
+    if [ -n "$nftables_ver" ]; then
+        $nft delete table inet "$NAME" 2>/dev/null
+        $nft delete table bridge "$NAME" 2>/dev/null
+    fi
+
+    : > "$IDLIST" 2>/dev/null
+}
+
+init_qosplus() {
+    local face lanipaddr
+
+    insmod sch_htb 2>/dev/null
+    insmod act_mirred 2>/dev/null
+    insmod ifb 2>/dev/null
+
+    $ip link del dev "${dev}_ifb" 2>/dev/null
+    $ip link add name "${dev}_ifb" type ifb
+    $ip link set dev "${dev}_ifb" up
+
+    $tc qdisc del dev "$dev" root 2>/dev/null
+    $tc qdisc add dev "$dev" root handle 1: htb default 1
+    $tc class add dev "$dev" parent 1: classid 1:1 htb rate 1000mbit ceil 1000mbit
+
+    $tc qdisc del dev "${dev}_ifb" root 2>/dev/null
+    $tc qdisc add dev "${dev}_ifb" root handle 1: htb default 1
+    $tc class add dev "${dev}_ifb" parent 1: classid 1:1 htb rate 1000mbit ceil 1000mbit
+
+    lanipaddr=$(uci -q get network.lan.ipaddr 2>/dev/null | awk -F '.' '{print $1"."$2"."$3".0/24"}')
+    if [ -n "$lanipaddr" ]; then
+        $tc filter add dev "$dev" parent 1: protocol ip prio 1 u32 \
+            match ip src "$lanipaddr" \
+            match ip dst "$lanipaddr" \
+            flowid 1:1
+
+        $tc filter add dev "${dev}_ifb" parent 1: protocol ip prio 1 u32 \
+            match ip src "$lanipaddr" \
+            match ip dst "$lanipaddr" \
+            flowid 1:1
+    fi
+
+    $tc qdisc del dev "$dev" ingress 2>/dev/null
+    for face in $(get_lan_ingress_ifaces); do
+        $tc qdisc del dev "$face" ingress 2>/dev/null
+        $tc qdisc add dev "$face" ingress
+        $tc filter add dev "$face" parent ffff: protocol all prio 2 u32 \
+            match u32 0 0 \
+            action mirred egress redirect dev "${dev}_ifb"
+    done
+
+    if [ -n "$nftables_ver" ]; then
+        $nft delete table inet "$NAME" 2>/dev/null
+        $nft delete table bridge "$NAME" 2>/dev/null
+
+        $nft add table inet "$NAME"
+        $nft add chain inet "$NAME" mark_forward { type filter hook forward priority -200\; policy accept\; }
+        $nft add chain inet "$NAME" mark_output { type filter hook output priority -200\; policy accept\; }
+        $nft add chain inet "$NAME" mark_postrouting { type filter hook postrouting priority -200\; policy accept\; }
+    fi
+
+    return 0
+}
+
+del_id() {
+    local list_id=$1
+    local id=$((list_id * 10 + 1000))
+
+    [ "${DEBUG:-0}" -eq 0 ] || echo "D: del_id $@ --$id"
+
+    $tc filter del dev "$dev" parent 1: protocol ip prio "$id" u32 2>/dev/null
+    $tc filter del dev "$dev" parent 1: protocol ip prio "$((id + 100))" u32 2>/dev/null
+    $tc filter del dev "$dev" parent 1: handle "800::$(printf "%x" "$id")" u32 2>/dev/null
+    $tc qdisc del dev "$dev" parent "1:$id" 2>/dev/null
+    $tc class del dev "$dev" parent 1:1 classid "1:$id" 2>/dev/null
+
+    $tc filter del dev "${dev}_ifb" parent 1: protocol ip prio "$id" fw 2>/dev/null
+    $tc filter del dev "${dev}_ifb" parent 1: protocol ip prio "$id" u32 2>/dev/null
+    $tc filter del dev "${dev}_ifb" parent 1: protocol ip prio "$((id + 100))" u32 2>/dev/null
+    $tc filter del dev "${dev}_ifb" parent 1: handle "800::$(printf "%x" "$id")" u32 2>/dev/null
+    $tc qdisc del dev "${dev}_ifb" parent "1:$id" 2>/dev/null
+    $tc class del dev "${dev}_ifb" parent 1:1 classid "1:$id" 2>/dev/null
+
+    delete_nft_rules_by_id "$id"
+}
+
+add_mac() {
+    local list_id=$1
+    local id=$((list_id * 10 + 1000))
+    local mac_addr mac_hex M0 M1 M2
+
+    mac_addr=$(normalize_mac "$mac")
+    mac_hex=$(echo "$mac_addr" | tr -d ':')
+
+    M0=$(printf '%s' "$mac_hex" | cut -c 1-4)
+    M1=$(printf '%s' "$mac_hex" | cut -c 5-8)
+    M2=$(printf '%s' "$mac_hex" | cut -c 9-12)
+
+    [ "${DEBUG:-0}" -eq 0 ] || echo "D: add_mac $@ --id:$id --mac:$mac_addr M012--$M0-$M1-$M2"
+
+    if is_gt_zero "$UL"; then
+        if [ -n "$nftables_ver" ]; then
+            $nft add rule inet "$NAME" mark_forward ether saddr "$mac_addr" counter meta mark set "$id" comment "eqosplus-$id"
+            $nft add rule inet "$NAME" mark_output ether saddr "$mac_addr" counter meta mark set "$id" comment "eqosplus-$id"
+            $nft add rule inet "$NAME" mark_postrouting ether saddr "$mac_addr" counter meta mark set "$id" comment "eqosplus-$id"
+        fi
+
+        $tc class add dev "${dev}_ifb" parent 1:1 classid "1:$id" htb rate "${UL}kbit" ceil "${UL}kbit" prio "$id" burst 15k cburst 15k
+        $tc qdisc add dev "${dev}_ifb" parent "1:$id" handle "${id}:" sfq perturb 10
+        $tc filter add dev "${dev}_ifb" parent 1: protocol ip prio "$id" handle "$id" fw flowid "1:$id"
+
+        $tc filter add dev "${dev}_ifb" parent 1: protocol ip prio "$((id + 100))" u32 \
+            match u16 0x0800 0xFFFF at -2 \
+            match u16 0x${M2} 0xFFFF at -4 \
+            match u32 0x${M0}${M1} 0xFFFFFFFF at -8 \
+            flowid "1:$id"
+    fi
+
+    if is_gt_zero "$DL"; then
+        $tc class add dev "$dev" parent 1:1 classid "1:$id" htb rate "${DL}kbit" ceil "${DL}kbit" prio "$id" burst 15k cburst 15k
+        $tc qdisc add dev "$dev" parent "1:$id" handle "${id}:" sfq perturb 10
+
+        $tc filter add dev "$dev" parent 1: protocol ip prio "$id" u32 \
+            match u16 0x0800 0xFFFF at -2 \
+            match u32 0x${M1}${M2} 0xFFFFFFFF at -12 \
+            match u16 0x${M0} 0xFFFF at -14 \
+            flowid "1:$id"
+    fi
+}
+
+add_ip() {
+    local list_id=$1
+    local id=$((list_id * 10 + 1000))
+    local raw cidrs cidr
+
+    raw=$(strip_spaces "$mac")
+    cidrs=$(ip_to_cidrs "$raw")
+
+    if [ -z "$cidrs" ]; then
+        echo "无效IP或IP范围: $raw" >> "$LOG"
+        return 1
+    fi
+
+    [ "${DEBUG:-0}" -eq 0 ] || echo "D: add_ip $@ --$id --$raw --cidrs: $cidrs"
+
+    if is_gt_zero "$UL"; then
+        $tc class add dev "${dev}_ifb" parent 1:1 classid "1:$id" htb rate "${UL}kbit" ceil "${UL}kbit" prio "$id" burst 15k cburst 15k
+        $tc qdisc add dev "${dev}_ifb" parent "1:$id" handle "${id}:" sfq perturb 10
+
+        for cidr in $cidrs; do
+            $tc filter add dev "${dev}_ifb" parent 1: protocol ip prio "$id" u32 \
+                match ip src "$cidr" \
+                flowid "1:$id"
+        done
+    fi
+
+    if is_gt_zero "$DL"; then
+        $tc class add dev "$dev" parent 1:1 classid "1:$id" htb rate "${DL}kbit" ceil "${DL}kbit" prio "$id" burst 15k cburst 15k
+        $tc qdisc add dev "$dev" parent "1:$id" handle "${id}:" sfq perturb 10
+
+        for cidr in $cidrs; do
+            $tc filter add dev "$dev" parent 1: protocol ip prio "$id" u32 \
+                match ip dst "$cidr" \
+                flowid "1:$id"
+        done
+    fi
+}
+
+valid_time() {
+    case "$1" in
+        [01][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+time_to_minutes() {
+    local tm=$1
+    local hour minute
+
+    valid_time "$tm" || return 1
+
+    hour=${tm%:*}
+    minute=${tm#*:}
+    hour=${hour#0}
+    hour=${hour#0}
+    minute=${minute#0}
+    minute=${minute#0}
+    [ -n "$hour" ] || hour=0
+    [ -n "$minute" ] || minute=0
+    [ "$hour" -le 23 ] || return 1
+
+    echo $((hour * 60 + minute))
+}
+
+check_time() {
+    local start=$1
+    local end=$2
+    local start_min end_min current_min
+
+    start_min=$(time_to_minutes "$start") || return 1
+    end_min=$(time_to_minutes "$end") || return 1
+    current_min=$(time_to_minutes "$(date +%H:%M)") || return 1
+
+    # Same-day windows only; equal or reversed windows are inactive.
+    [ "$start_min" -lt "$end_min" ] || return 1
+    [ "$current_min" -ge "$start_min" ] && [ "$current_min" -lt "$end_min" ]
+}
+
+check_list() {
+    local i=$1
+    local start_time end_time wweek current_weekday day day_match
+
+    start_time=$(uci -q get "$NAME.@device[$i].timestart" 2>/dev/null)
+    end_time=$(uci -q get "$NAME.@device[$i].timeend" 2>/dev/null)
+    wweek=$(uci -q get "$NAME.@device[$i].week" 2>/dev/null)
+    current_weekday=$(date +%u)
+
+    [ -z "$start_time" ] && [ -z "$end_time" ] && [ -z "$wweek" ] && return 0
+
+    if [ -n "$wweek" ] && [ "$wweek" != "0" ]; then
+        day_match=0
+        for day in $(echo "$wweek" | tr ',' ' '); do
+            [ "$day" -eq "$current_weekday" ] 2>/dev/null && day_match=1 && break
+        done
+        [ "$day_match" -eq 0 ] && return 1
+    fi
+
+    if [ -n "$start_time" ] && [ -n "$end_time" ]; then
+        check_time "$start_time" "$end_time" || return 1
+    fi
+
+    return 0
+}
+
+case "$crrun" in
+    "stop")
+        stop_qos
+    ;;
+
+    "start")
+        : > "$LOG" 2>/dev/null
+
+        if ! is_enabled; then
+            stop_qos >/dev/null 2>&1
+            exit 0
+        fi
+
+        stop_qos >/dev/null 2>&1
+        sleep 2
+        init_qosplus
+
+        uci show "$NAME" 2>/dev/null |
+            grep "enable='1'" |
+            grep "device" |
+            grep -oE '\[.*?\]' |
+            grep -oE '[0-9]+' |
+            sed -e 's/^/!/g' -e 's/$/!/g' > "$IDLIST"
+
+        idlist=$(sed -e 's/!//g' "$IDLIST" 2>/dev/null)
+
+        if [ ! -s "$IDLIST" ]; then
+            echo "没有启用的限速设备" >> "$LOG"
+            exit 1
+        fi
+
+        device_count=0
+
+        for list in $idlist; do
+            if check_list "$list"; then
+                mac=$(uci -q get "$NAME.@device[$list].mac" 2>/dev/null)
+                download_mb=$(uci -q get "$NAME.@device[$list].download" 2>/dev/null)
+                upload_mb=$(uci -q get "$NAME.@device[$list].upload" 2>/dev/null)
+                comment=$(uci -q get "$NAME.@device[$list].comment" 2>/dev/null)
+
+                DL=$(to_kbit "$download_mb")
+                UL=$(to_kbit "$upload_mb")
+
+                if [ -n "$mac" ]; then
+                    if is_macaddr "$mac"; then
+                        add_mac "$list" >> "$LOG" 2>&1
+                        echo "MAC限速: $comment ($mac) - 下载:${download_mb}MB/s(${DL}kbit/s) 上传:${upload_mb}MB/s(${UL}kbit/s)" >> "$LOG"
+                    else
+                        add_ip "$list" >> "$LOG" 2>&1
+                        echo "IP限速: $comment ($mac) - 下载:${download_mb}MB/s(${DL}kbit/s) 上传:${upload_mb}MB/s(${UL}kbit/s)" >> "$LOG"
+                    fi
+                    device_count=$((device_count + 1))
+                fi
+            else
+                if [ -f "$IDLIST" ] && grep -q "!${list}!" "$IDLIST" 2>/dev/null; then
+                    del_id "$list" >> "$LOG" 2>&1
+                    sed -i "/!$list!/d" "$IDLIST" >/dev/null 2>&1
+                fi
+            fi
+        done
+
+        echo "EQOSPLUS限速服务启动完成，共配置 $device_count 个设备" >> "$LOG"
+        echo "" >> "$LOG"
+        echo "当前限速状态:" >> "$LOG"
+        "$bin_tc" -s class show dev "$dev" 2>/dev/null | grep "rate" | head -5 >> "$LOG"
+        "$bin_tc" -s class show dev "${dev}_ifb" 2>/dev/null | grep "rate" | head -5 >> "$LOG"
+    ;;
+
+    "add")
+        is_enabled || exit 0
+
+        echo "添加限速规则..."
+
+        for list in $(echo "$crid" | sed -e 's/!//g' | sed 's/,/ /g'); do
+            mac=$(uci -q get "$NAME.@device[$list].mac" 2>/dev/null)
+            download_mb=$(uci -q get "$NAME.@device[$list].download" 2>/dev/null)
+            upload_mb=$(uci -q get "$NAME.@device[$list].upload" 2>/dev/null)
+            comment=$(uci -q get "$NAME.@device[$list].comment" 2>/dev/null)
+
+            [ -n "$mac" ] || continue
+            check_list "$list" || continue
+
+            DL=$(to_kbit "$download_mb")
+            UL=$(to_kbit "$upload_mb")
+
+            del_id "$list" >/dev/null 2>&1
+
+            if is_macaddr "$mac"; then
+                add_mac "$list" >> "$LOG" 2>&1
+                echo "添加MAC限速: $comment ($mac)" >> "$LOG"
+            else
+                add_ip "$list" >> "$LOG" 2>&1
+                echo "添加IP限速: $comment ($mac)" >> "$LOG"
+            fi
+
+            grep -q "!${list}!" "$IDLIST" 2>/dev/null || echo "!${list}!" >> "$IDLIST"
+        done
+    ;;
+
+    "del")
+        for list in $(echo "$crid" | sed -e 's/!//g' | sed 's/,/ /g'); do
+            del_id "$list" >> "$LOG" 2>&1
+            sed -i "/!$list!/d" "$IDLIST" >/dev/null 2>&1
+        done
+    ;;
+
+    "status")
+        echo "EQOSPLUS限速服务状态"
+
+        echo "### 网络接口: $dev ###"
+        echo "# 下载队列统计 #"
+        "$bin_tc" -s qdisc show dev "$dev" 2>/dev/null || echo "无下载队列"
+
+        echo "# 下载类统计 #"
+        "$bin_tc" -s class show dev "$dev" 2>/dev/null | grep -E "class htb|rate [0-9]" || echo "无下载类"
+
+        echo "# 下载过滤器 #"
+        "$bin_tc" -s filter show dev "$dev" parent 1: 2>/dev/null | head -10 || echo "无下载过滤器"
+
+        echo "### 虚拟接口: ${dev}_ifb ###"
+        echo "# 上传队列统计 #"
+        "$bin_tc" -s qdisc show dev "${dev}_ifb" 2>/dev/null || echo "无上传队列"
+
+        echo "# 上传类统计 #"
+        "$bin_tc" -s class show dev "${dev}_ifb" 2>/dev/null | grep -E "class htb|rate [0-9]" || echo "无上传类"
+
+        echo "# 上传过滤器 #"
+        "$bin_tc" -s filter show dev "${dev}_ifb" parent 1: 2>/dev/null | head -20 || echo "无上传过滤器"
+
+        echo "### LAN入口接口 ###"
+        for face in $(get_lan_ingress_ifaces); do
+            echo "# $face ingress #"
+            "$bin_tc" -s qdisc show dev "$face" 2>/dev/null | grep ingress || echo "无入口队列"
+            "$bin_tc" -s filter show dev "$face" parent ffff: 2>/dev/null | head -10
+        done
+
+        if [ -n "$nftables_ver" ]; then
+            echo "### NFTables规则 ###"
+            "$bin_nft" list table inet "$NAME" 2>/dev/null || echo "没有NFTables规则"
+        else
+            echo "NFTables不可用"
+        fi
+
+        echo "### 流量统计 ###"
+        echo "下载流量:"
+        "$bin_tc" -s class show dev "$dev" 2>/dev/null | grep "Sent" | head -5
+
+        echo "上传流量:"
+        "$bin_tc" -s class show dev "${dev}_ifb" 2>/dev/null | grep "Sent" | head -5
+    ;;
+
+    *)
+        echo "Usage: $0 {start|stop|add|del|status} [id]"
+    ;;
+esac

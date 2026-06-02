@@ -1,0 +1,16 @@
+{
+	"admin/services/timecontrol": {
+		"title": "Timecontrol",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "timecontrol"
+		},
+		"depends": {
+			"acl": [ "luci-app-timecontrol" ],
+			"uci": {
+				"timecontrol": true
+			}
+		}
+	}
+}

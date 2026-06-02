@@ -1,0 +1,69 @@
+
+msgid "Eqosplus"
+msgstr "定时限速"
+
+msgid "Network speed limit"
+msgstr "定时网速限制"
+
+msgid "Eqos switch"
+msgstr "开关"
+
+msgid "Running state"
+msgstr "运行状态"
+
+msgid "Not running"
+msgstr "未运行"
+
+msgid "Running"
+msgstr "已运行"
+
+msgid "Users can limit the network speed for uploading/downloading through MAC, IP, and IP segments (192.168.10.100-192.168.10.200). The speed unit is MB/second."
+msgstr "用户可以通过MAC、IP、IP段（192.168.10.100-192.168.10.200),限制上传/下载的网络速度。速度单位为MB/秒。"
+
+msgid "IP/MAC"
+msgstr "IP/MAC"
+
+msgid "IP/MAC required"
+msgstr "请填写 IP/MAC"
+
+msgid "Please enter MAC in xx:xx:xx:xx:xx:xx format"
+msgstr "请输入 xx:xx:xx:xx:xx:xx 格式的 MAC 地址"
+
+msgid "Downloads"
+msgstr "下载速度"
+
+msgid "Uploads"
+msgstr "上传速度"
+
+msgid "Comment"
+msgstr "备注"
+
+msgid "Upload bandwidth(Mbit/s)"
+msgstr "上传总带宽(Mbit/s)"
+
+msgid "Download bandwidth(Mbit/s)"
+msgstr "下载总带宽(Mbit/s)"
+
+msgid "Start control time"
+msgstr "起控时间"
+
+msgid "Stop control time"
+msgstr "停控时间"
+
+msgid "Please enter time in HH:MM format"
+msgstr "请输入 HH:MM 格式的时间"
+
+msgid "Start control time must be earlier than stop control time"
+msgstr "起控时间必须早于停控时间"
+
+msgid "Week Day(1~7)"
+msgstr "星期(1~7)"
+
+msgid "Rest Day"
+msgstr "休息日"
+
+msgid "Workday"
+msgstr "工作日"
+
+msgid "Everyday"
+msgstr "每天"
