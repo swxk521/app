@@ -49,11 +49,11 @@ is_enabled() {
 }
 
 is_macaddr() {
-    echo "$1" | grep -qE '^([0-9A-Fa-f]{2}[-:]){5}[0-9A-Fa-f]{2}$'
+    echo "$1" | grep -qE '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
 }
 
 normalize_mac() {
-    echo "$1" | tr 'A-F' 'a-f' | tr '-' ':'
+    printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
 is_ip_range() {

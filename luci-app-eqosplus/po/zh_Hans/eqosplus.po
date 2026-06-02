@@ -26,6 +26,9 @@ msgstr "IP/MAC"
 msgid "IP/MAC required"
 msgstr "请填写 IP/MAC"
 
+msgid "Please enter MAC in xx:xx:xx:xx:xx:xx format"
+msgstr "请输入 xx:xx:xx:xx:xx:xx 格式的 MAC 地址"
+
 msgid "Downloads"
 msgstr "下载速度"
 

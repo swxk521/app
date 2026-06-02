@@ -37,10 +37,21 @@ e.size = 4
 ip = t:option(Value, "mac", translate("IP/MAC"))
 ip.size = 8
 
+local function valid_mac_value(value)
+    return value and value:match("^[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]$")
+end
+
+local function looks_like_mac_value(value)
+    return value and (
+        value:match("^[0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F]$") or
+        value:match("^[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$")
+    )
+end
+
 local function normalize_target(value)
     value = value and value:match("^%s*(.-)%s*$") or ""
 
-    if value:match("^[0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F]$") then
+    if valid_mac_value(value) then
         return value:lower()
     end
 
@@ -51,6 +62,14 @@ function validate_target(self, value, section)
     value = normalize_target(value)
 
     if value ~= "" then
+        if valid_mac_value(value) then
+            return value
+        end
+
+        if value:find(":") or looks_like_mac_value(value) then
+            return nil, translate("Please enter MAC in xx:xx:xx:xx:xx:xx format")
+        end
+
         return value
     end
 

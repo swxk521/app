@@ -49,14 +49,62 @@ local function normalize_target(value)
     return value
 end
 
+local function valid_ipv4(value)
+    local parts = { value:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$") }
+
+    if #parts ~= 4 then
+        return false
+    end
+
+    for _, part in ipairs(parts) do
+        local number = tonumber(part)
+        if not number or number > 255 then
+            return false
+        end
+    end
+
+    return true
+end
+
+local function valid_target(value)
+    if valid_ipv4(value) then
+        return true
+    end
+
+    local start_ip, end_ip = value:match("^([^%-]+)%-(.+)$")
+    if start_ip and end_ip and valid_ipv4(start_ip) and valid_ipv4(end_ip) then
+        return true
+    end
+
+    local ipaddr, mask = value:match("^([^/]+)/(%d+)$")
+    if ipaddr and valid_ipv4(ipaddr) and tonumber(mask) and tonumber(mask) <= 32 then
+        return true
+    end
+
+    return value:match("^[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]$") ~= nil
+end
+
+local function looks_like_bad_mac(value)
+    local hex = value:gsub("[^0-9a-fA-F]", "")
+    return #hex == 12 and value:find(":") == nil
+end
+
 function validate_target(self, value, section)
     value = normalize_target(value)
 
-    if value ~= "" then
+    if value == "" then
+        return nil, translate("IP/MAC required")
+    end
+
+    if valid_target(value) then
         return value
     end
 
-    return nil, translate("IP/MAC required")
+    if looks_like_bad_mac(value) then
+        return nil, translate("MAC address must use colon-separated format")
+    end
+
+    return nil, translate("Invalid IP/MAC format")
 end
 
 ip.validate = validate_target
