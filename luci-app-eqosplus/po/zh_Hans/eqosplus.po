@@ -32,11 +32,11 @@ msgstr "请输入 xx:xx:xx:xx:xx:xx 格式的 MAC 地址"
 msgid "Please enter a valid IPv4, CIDR, IP range (192.168.10.100-200), or MAC address"
 msgstr "请输入有效的 IPv4、CIDR、IP 段（192.168.10.100-200）或 MAC 地址"
 
-msgid "DownloadsMB/s"
-msgstr "下载速度MB/s"
+msgid "DownloadsMB"
+msgstr "下载速度MB"
 
-msgid "UploadsMB/s"
-msgstr "上传速度MB/s"
+msgid "UploadsMB"
+msgstr "上传速度MB"
 
 msgid "Comment"
 msgstr "备注"

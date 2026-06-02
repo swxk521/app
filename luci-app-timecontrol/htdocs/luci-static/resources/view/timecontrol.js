@@ -309,7 +309,7 @@ return view.extend({
 
 		o = s.option(form.Value, 'comment', _('Comment'));
 		o.editable = true;
-		o.width = '10em';
+		o.width = '8em';
 
 		o = s.option(form.Flag, 'enable', _('Enabled'));
 		o.editable = true;

@@ -325,7 +325,7 @@ return view.extend({
 
 		o = s.option(form.Value, 'comment', _('Comment'));
 		o.editable = true;
-		o.width = '10em';
+		o.width = '8em';
 
 		o = s.option(form.Flag, 'enable', _('Enabled'));
 		o.editable = true;
@@ -344,13 +344,13 @@ return view.extend({
 			uci.set(CONFIG, section_id, 'mac', normalizeTarget(value));
 		};
 
-		o = s.option(form.Value, 'download', _('DownloadsMB/s'));
+		o = s.option(form.Value, 'download', _('DownloadsMB'));
 		o.editable = true;
 		o.placeholder = '0.1';
 		o.default = '0.1';
 		o.width = '6em';
 
-		o = s.option(form.Value, 'upload', _('UploadsMB/s'));
+		o = s.option(form.Value, 'upload', _('UploadsMB'));
 		o.editable = true;
 		o.placeholder = '0.1';
 		o.default = '0.1';
