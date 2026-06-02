@@ -9,7 +9,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-timecontrol
 PKG_VERSION:=1.0
-PKG_RELEASE:=20260527
+PKG_RELEASE:=20260601
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=sirpdboy <herboy2008@gmail.com>
 
@@ -24,7 +24,7 @@ endef
 
 define Package/$(PKG_NAME)/postinst
 #!/bin/sh
-rm -f /tmp/luci-*
+[ -n "$${IPKG_INSTROOT}" ] || rm -f /tmp/luci-indexcache
 exit 0
 endef
 
