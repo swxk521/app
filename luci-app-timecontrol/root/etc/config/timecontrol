@@ -10,3 +10,4 @@ config device
 	option timestart '00:00'
 	option timeend '23:59'
 	option week '0'
+
