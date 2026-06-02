@@ -157,17 +157,27 @@ for _, dev in ipairs(devices) do
     ip:value(dev.ip, dev.display)
 end
 dl = t:option(Value, "download", translate("Downloads"))
-dl.default = '1'
+dl.default = '0.1'
 dl.size = 4
 
 ul = t:option(Value, "upload", translate("Uploads"))
-ul.default = '1'
+ul.default = '0.1'
 ul.size = 4
 
 local timestart_option, timeend_option
 
 local function valid_time_value(value)
-    return value and value:match("^([01]%d|2[0-3]):[0-5]%d$")
+    local hour, minute
+
+    if not value then
+        return false
+    end
+
+    hour, minute = value:match("^(%d%d):(%d%d)$")
+    hour = tonumber(hour)
+    minute = tonumber(minute)
+
+    return hour and minute and hour <= 23 and minute <= 59
 end
 
 local function time_to_minutes(value)

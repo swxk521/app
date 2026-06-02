@@ -7,7 +7,7 @@ config device
 	option timestart '00:00'
 	option timeend '23:59'
 	option week '0'
-	option download '1'
-	option upload '1'
+	option download '0.1'
+	option upload '0.1'
 	option enable '0'
 
