@@ -298,10 +298,14 @@ list_known_ipv4s() {
         awk '/lladdr/ && $0 !~ /FAILED|INCOMPLETE/ { print $1 }'
 }
 
+normalize_mac() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 list_ips_by_mac() {
     local mac
 
-    mac=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+    mac=$(normalize_mac "$1")
 
     if [ -r /proc/net/arp ]; then
         awk -v mac="$mac" 'NR > 1 && tolower($4) == mac { print $1 }' /proc/net/arp
@@ -701,7 +705,7 @@ get_target_info() {
     esac
 
     if valid_mac "$target"; then
-        mac=$(echo "$target" | tr '[:upper:]' '[:lower:]')
+        mac=$(normalize_mac "$target")
         echo "bridge $mac"
         return 0
     fi

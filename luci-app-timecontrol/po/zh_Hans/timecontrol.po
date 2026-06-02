@@ -55,6 +55,9 @@ msgstr "当开始和结束时间一样时,启用观看和休息时间控制,以�
 msgid "IP/MAC"
 msgstr "IP/MAC"
 
+msgid "IP/MAC required"
+msgstr "请填写 IP/MAC"
+
 msgid "Comment"
 msgstr "备注"
 

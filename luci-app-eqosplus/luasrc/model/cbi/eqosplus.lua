@@ -36,11 +36,41 @@ e.size = 4
 ip = t:option(Value, "mac", translate("IP/MAC"))
 ip.size = 8
 
+local function normalize_target(value)
+    value = value and value:match("^%s*(.-)%s*$") or ""
+
+    if value:match("^[0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F][:%-][0-9a-fA-F][0-9a-fA-F]$") then
+        return value:lower()
+    end
+
+    return value
+end
+
+function validate_target(self, value, section)
+    value = normalize_target(value)
+
+    if value ~= "" then
+        return value
+    end
+
+    return nil, translate("IP/MAC required")
+end
+
+ip.validate = validate_target
+
 local function get_devices()
     local devices = {}
     local seen_ips = {}
     local ubus = require "ubus"
     local conn = ubus.connect()
+
+    local function format_device_display(ip, hostname)
+        if hostname and hostname ~= "" and hostname ~= "unknown" then
+            return string.format("%s - %s", ip, hostname)
+        end
+
+        return ip
+    end
     
     local function get_hostname(ip)
         local f = io.popen("nslookup "..ip.." 2>/dev/null | grep 'name =' | cut -d'=' -f2 | sed 's/\\.$//'")
@@ -71,9 +101,9 @@ local function get_devices()
                 local hostname = lease.hostname or get_hostname(lease.ipaddr)
                 devices[#devices+1] = {
                     ip = lease.ipaddr,
-                    mac = lease.mac:upper(),
+                    mac = lease.mac:lower(),
                     hostname = hostname,
-                    display = string.format("%s (%s) - %s", lease.ipaddr, lease.mac:upper(), hostname)
+                    display = format_device_display(lease.ipaddr, hostname)
                 }
                 seen_ips[lease.ipaddr] = true
             end
@@ -85,13 +115,13 @@ local function get_devices()
         for line in arp_cmd:lines() do
             local ip_addr, mac = line:match("^(%S+)%s+.+%s+(%S+)%s+")
             if ip_addr and mac and mac ~= "00:00:00:00:00:00" and not seen_ips[ip_addr] then
-                mac = mac:upper()
+                mac = mac:lower()
                 local hostname = get_hostname(ip_addr)
                 devices[#devices+1] = {
                     ip = ip_addr,
                     mac = mac,
                     hostname = hostname,
-                    display = string.format("%s (%s) - %s", ip_addr, mac, hostname)
+                    display = format_device_display(ip_addr, hostname)
                 }
                 seen_ips[ip_addr] = true
             end
