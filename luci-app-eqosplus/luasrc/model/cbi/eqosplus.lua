@@ -1,6 +1,7 @@
 -- Copyright 2022-2023 sirpdboy <herboy2008@gmail.com>
 -- Licensed to the public under the Apache License 2.0.
 local sys = require "luci.sys"
+local http = require "luci.http"
 local ifaces = sys.net:devices()
 local WADM = require "luci.tools.webadmin"
 local ipc = require "luci.ip"
@@ -143,31 +144,62 @@ dl.size = 4
 ul = t:option(Value, "upload", translate("Uploads"))
 ul.default = '1'
 ul.size = 4
-function validate_time(self, value, section)
-        local hh, mm, ss
-        hh, mm, ss = string.match (value, "^(%d?%d):(%d%d)$")
-        hh = tonumber (hh)
-        mm = tonumber (mm)
-        if hh and mm and hh <= 23 and mm <= 59 then
-            return value
-        else
-            return nil, "Time HH:MM or space"
-        end
+
+local timestart_option, timeend_option
+
+local function valid_time_value(value)
+    return value and value:match("^([01]%d|2[0-3]):[0-5]%d$")
 end
 
-e = t:option(Value, "timestart", translate("Start control time"))
-e.placeholder = '00:00'
-e.default = '00:00'
-e.validate = validate_time
-e.rmempty = true
-e.size = 4
+local function time_to_minutes(value)
+    local hour, minute = value:match("^(%d%d):(%d%d)$")
+    return tonumber(hour) * 60 + tonumber(minute)
+end
 
-e = t:option(Value, "timeend", translate("Stop control time"))
-e.placeholder = '23:59'
-e.default = '23:59'
-e.validate = validate_time
-e.rmempty = true
-e.size = 4
+local function posted_value(option, section, current, value)
+    if option == current then
+        return value
+    end
+
+    if option then
+        local posted = http.formvalue(option:cbid(section))
+        if posted and posted ~= "" then
+            return posted
+        end
+    end
+
+    return option and option:cfgvalue(section) or nil
+end
+
+function validate_time(self, value, section)
+    if not valid_time_value(value) then
+        return nil, translate("Please enter time in HH:MM format")
+    end
+
+    local timestart = posted_value(timestart_option, section, self, value)
+    local timeend = posted_value(timeend_option, section, self, value)
+
+    if valid_time_value(timestart) and valid_time_value(timeend) and
+        time_to_minutes(timestart) >= time_to_minutes(timeend) then
+        return nil, translate("Start control time must be earlier than stop control time")
+    end
+
+    return value
+end
+
+timestart_option = t:option(Value, "timestart", translate("Start control time"))
+timestart_option.placeholder = '00:00'
+timestart_option.default = '00:00'
+timestart_option.validate = validate_time
+timestart_option.rmempty = true
+timestart_option.size = 4
+
+timeend_option = t:option(Value, "timeend", translate("Stop control time"))
+timeend_option.placeholder = '23:59'
+timeend_option.default = '23:59'
+timeend_option.validate = validate_time
+timeend_option.rmempty = true
+timeend_option.size = 4
 
 week=t:option(Value,"week",translate("Week Day(1~7)"))
 week.rmempty = true

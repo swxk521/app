@@ -351,14 +351,21 @@ add_ip() {
     fi
 }
 
+valid_time() {
+    case "$1" in
+        [01][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
 time_to_minutes() {
     local tm=$1
     local hour minute
 
-    case "$tm" in
-        [0-9]:[0-5][0-9]|[0-2][0-9]:[0-5][0-9]) ;;
-        *) return 1 ;;
-    esac
+    valid_time "$tm" || return 1
 
     hour=${tm%:*}
     minute=${tm#*:}

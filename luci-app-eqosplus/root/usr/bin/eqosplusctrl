@@ -17,17 +17,26 @@ get_enabled_ids() {
 		sed -n "s/^${NAME}\.@device\[\([0-9][0-9]*\)\]\.enable='1'$/\1/p"
 }
 
+valid_time() {
+	case "$1" in
+		[01][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])
+			return 0
+			;;
+	esac
+
+	return 1
+}
+
 time_to_minutes() {
 	tm=$1
 
-	case "$tm" in
-		[0-2][0-9]:[0-5][0-9]) ;;
-		*) return 1 ;;
-	esac
+	valid_time "$tm" || return 1
 
 	hour=${tm%:*}
 	minute=${tm#*:}
 	hour=${hour#0}
+	hour=${hour#0}
+	minute=${minute#0}
 	minute=${minute#0}
 	[ -n "$hour" ] || hour=0
 	[ -n "$minute" ] || minute=0

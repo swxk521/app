@@ -76,6 +76,12 @@ msgstr "休息时间"
 msgid "Please enter a positive integer"
 msgstr "请输入正整数"
 
+msgid "Please enter time in HH:MM format"
+msgstr "请输入 HH:MM 格式的时间"
+
+msgid "Start control time must not be later than stop control time"
+msgstr "起控时间不能晚于停控时间"
+
 msgid "Week Day(1~7)"
 msgstr "星期(1~7)"
 

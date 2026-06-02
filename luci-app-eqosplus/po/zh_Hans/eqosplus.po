@@ -47,6 +47,12 @@ msgstr "起控时间"
 msgid "Stop control time"
 msgstr "停控时间"
 
+msgid "Please enter time in HH:MM format"
+msgstr "请输入 HH:MM 格式的时间"
+
+msgid "Start control time must be earlier than stop control time"
+msgstr "起控时间必须早于停控时间"
+
 msgid "Week Day(1~7)"
 msgstr "星期(1~7)"
 
