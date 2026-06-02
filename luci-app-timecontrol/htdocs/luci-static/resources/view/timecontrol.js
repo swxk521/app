@@ -110,8 +110,10 @@ function optionFormValue(map, option, section_id) {
 function validateTimePair(option, section_id, value) {
 	var timestart, timeend;
 
-	if (value == null || value === '')
-		return true;
+	value = trimValue(value);
+
+	if (value == '')
+		return _('Please enter time in HH:MM format');
 
 	if (!validTime(value))
 		return _('Please enter time in HH:MM format');
@@ -120,19 +122,18 @@ function validateTimePair(option, section_id, value) {
 	timeend = (option.option == 'timeend') ? value : optionFormValue(option.map, 'timeend', section_id);
 
 	if (validTime(timestart) && validTime(timeend) &&
-	    timeToMinutes(timestart) > timeToMinutes(timeend))
-		return _('Start control time must not be later than stop control time');
+	    timeToMinutes(timestart) >= timeToMinutes(timeend))
+		return _('Start control time must be earlier than stop control time');
 
 	return true;
 }
 
 function validateMinutes(section_id, value) {
-	if (value == null || value === '')
-		return true;
+	value = trimValue(value);
 
-	return (/^\d+$/.test(value) && +value > 0)
+	return (/^\d+$/.test(value))
 		? true
-		: _('Please enter a positive integer');
+		: _('Please enter a non-negative integer');
 }
 
 function validateWeekDays(section_id, value) {
@@ -263,7 +264,7 @@ return view.extend({
 		m = new form.Map(CONFIG, _('Internet time control'),
 			_('Users can limit their internet usage time through MAC and IP, with available IP ranges such as 192.168.110.00 to 192.168.10.200,Managed devices will be unable to access the soft router\'s administrative interface!') +
 			'<br />' +
-			_('When the start and end times are the same, enable viewing and rest time control, cycling in minutes in a repeating loop.'));
+			_('Set viewing or rest time to 0 to block for the whole start and stop time range. When both are greater than 0, the viewing and rest loop runs only inside that range; outside it, no control is applied.'));
 
 		s = m.section(form.TypedSection, MAIN_SECTION);
 		s.anonymous = true;
@@ -306,17 +307,17 @@ return view.extend({
 
 		o = s.option(form.Value, 'watchtime', _('Viewing time'));
 		o.editable = true;
-		o.placeholder = '15';
-		o.default = '15';
-		o.rmempty = true;
+		o.placeholder = '0';
+		o.default = '0';
+		o.rmempty = false;
 		o.width = '6em';
 		o.validate = validateMinutes;
 
 		o = s.option(form.Value, 'resttime', _('Rest time'));
 		o.editable = true;
-		o.placeholder = '5';
-		o.default = '5';
-		o.rmempty = true;
+		o.placeholder = '0';
+		o.default = '0';
+		o.rmempty = false;
 		o.width = '6em';
 		o.validate = validateMinutes;
 
@@ -324,7 +325,7 @@ return view.extend({
 		o.editable = true;
 		o.placeholder = '00:00';
 		o.default = '00:00';
-		o.rmempty = true;
+		o.rmempty = false;
 		o.width = '7em';
 		o.validate = function(section_id, value) {
 			return validateTimePair(this, section_id, value);
@@ -334,7 +335,7 @@ return view.extend({
 		o.editable = true;
 		o.placeholder = '23:59';
 		o.default = '23:59';
-		o.rmempty = true;
+		o.rmempty = false;
 		o.width = '7em';
 		o.validate = function(section_id, value) {
 			return validateTimePair(this, section_id, value);

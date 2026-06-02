@@ -5,9 +5,8 @@ config timecontrol
 config device
 	option enable '0'
 	option mac '192.168.10.100'
-	option watchtime '15'
-	option resttime '5'
+	option watchtime '0'
+	option resttime '0'
 	option timestart '00:00'
 	option timeend '23:59'
 	option week '0'
-

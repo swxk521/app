@@ -212,7 +212,12 @@ valid_minutes() {
             ;;
     esac
 
-    [ "$1" -gt 0 ]
+    return 0
+}
+
+positive_minutes() {
+    valid_minutes "$1" || return 1
+    [ "$(to_dec "$1")" -gt 0 ]
 }
 
 current_minute_tick() {
@@ -469,7 +474,7 @@ cycle_target_should_block() {
     local signature state_file stored_signature
     local current_tick last_tick elapsed mode watch_used rest_left offline_minutes
 
-    if ! valid_minutes "$watch_limit" || ! valid_minutes "$rest_limit"; then
+    if ! positive_minutes "$watch_limit" || ! positive_minutes "$rest_limit"; then
         reset_loop_state "$state_id"
         return 1
     fi
@@ -906,7 +911,7 @@ check_time() {
     [ "$current_min" -ge "$start_min" ] && [ "$current_min" -lt "$end_min" ]
 }
 
-cycle_mode_applies() {
+device_time_window_active() {
     local i=$1
     local start_time end_time wweek current_weekday
 
@@ -921,7 +926,27 @@ cycle_mode_applies() {
 
     valid_time "$start_time" || return 1
     valid_time "$end_time" || return 1
-    [ "$start_time" = "$end_time" ]
+    check_time "$start_time" "$end_time"
+}
+
+device_minutes_valid() {
+    local id=$1
+    local watch_limit rest_limit
+
+    watch_limit=$(config_t_get device watchtime "$id" "0")
+    rest_limit=$(config_t_get device resttime "$id" "0")
+
+    valid_minutes "$watch_limit" && valid_minutes "$rest_limit"
+}
+
+device_cycle_enabled() {
+    local id=$1
+    local watch_limit rest_limit
+
+    watch_limit=$(config_t_get device watchtime "$id" "0")
+    rest_limit=$(config_t_get device resttime "$id" "0")
+
+    positive_minutes "$watch_limit" && positive_minutes "$rest_limit"
 }
 
 sync_ip_cycle_targets() {
@@ -934,7 +959,7 @@ sync_ip_cycle_targets() {
     rest_limit=$(config_t_get device resttime "$id" "0")
     blocked=1
 
-    if ! valid_minutes "$watch_limit" || ! valid_minutes "$rest_limit"; then
+    if ! positive_minutes "$watch_limit" || ! positive_minutes "$rest_limit"; then
         reset_loop_states_for_id "$id"
         return 1
     fi
@@ -954,27 +979,24 @@ sync_ip_cycle_targets() {
 
 check_list() {
     local i=$1
-    local start_time end_time wweek current_weekday
 
-    start_time=$(config_t_get device timestart "$i" "00:00")
-    end_time=$(config_t_get device timeend "$i" "00:00")
-    wweek=$(config_t_get device week "$i" "0")
-    current_weekday=$(date +%u)
-
-    if [ "$wweek" != "0" ]; then
-        echo "$wweek" | grep -qw "$current_weekday" || return 1
+    if ! device_time_window_active "$i"; then
+        reset_loop_states_for_id "$i"
+        return 1
     fi
 
-    valid_time "$start_time" || return 1
-    valid_time "$end_time" || return 1
+    if ! device_minutes_valid "$i"; then
+        reset_loop_states_for_id "$i"
+        return 1
+    fi
 
-    if [ "$start_time" = "$end_time" ]; then
+    if device_cycle_enabled "$i"; then
         cycle_should_block "$i"
         return $?
     fi
 
     reset_loop_states_for_id "$i"
-    check_time "$start_time" "$end_time"
+    return 0
 }
 
 dedupe_file() {
@@ -1087,7 +1109,7 @@ sync_timecontrol() {
         table=$1
         target=$2
 
-        if cycle_mode_applies "$id" && [ "$table" = "ip" ] && ! valid_ipv4 "$target"; then
+        if device_time_window_active "$id" && device_cycle_enabled "$id" && [ "$table" = "ip" ] && ! valid_ipv4 "$target"; then
             if sync_ip_cycle_targets "$id" "$target" "$desired_ranges"; then
                 echo "!$id!" >> "$desired_ids"
             fi

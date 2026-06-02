@@ -49,8 +49,8 @@ msgstr "运行中"
 msgid "Users can limit their internet usage time through MAC and IP, with available IP ranges such as 192.168.110.00 to 192.168.10.200,Managed devices will be unable to access the soft router's administrative interface!"
 msgstr "可以通过 MAC、IP 限制用户上网时间，可用 IP 范围如：192.168.10.100-192.168.10.200，被管控的机器将无法连接上软路由后台！"
 
-msgid "When the start and end times are the same, enable viewing and rest time control, cycling in minutes in a repeating loop."
-msgstr "当开始和结束时间一样时,启用观看和休息时间控制,以分钟为单位往复循环。"
+msgid "Set viewing or rest time to 0 to block for the whole start and stop time range. When both are greater than 0, the viewing and rest loop runs only inside that range; outside it, no control is applied."
+msgstr "观看时间或休息时间设置为 0 时，在起控和停控时间段内整段禁止；两者都大于 0 时，只在该时间段内执行观看和休息循环，超出时间段不执行控制。"
 
 msgid "IP/MAC"
 msgstr "IP/MAC"
@@ -79,14 +79,14 @@ msgstr "观看时间"
 msgid "Rest time"
 msgstr "休息时间"
 
-msgid "Please enter a positive integer"
-msgstr "请输入正整数"
+msgid "Please enter a non-negative integer"
+msgstr "请输入大于等于 0 的整数"
 
 msgid "Please enter time in HH:MM format"
 msgstr "请输入 HH:MM 格式的时间"
 
-msgid "Start control time must not be later than stop control time"
-msgstr "起控时间不能晚于停控时间"
+msgid "Start control time must be earlier than stop control time"
+msgstr "起控时间必须早于停控时间"
 
 msgid "Please enter 0 or weekdays from 1 to 7 separated by commas"
 msgstr "请输入 0 或用英文逗号分隔的 1 到 7"
