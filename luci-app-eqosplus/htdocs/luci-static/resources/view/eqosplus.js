@@ -50,23 +50,90 @@ function validateTarget(section_id, value) {
 	if (value.indexOf(':') > -1 || looksLikeMac(value))
 		return _('Please enter MAC in xx:xx:xx:xx:xx:xx format');
 
-	return true;
+	return validIpTarget(value)
+		? true
+		: _('Please enter a valid IPv4, CIDR, IP range (192.168.10.100-200), or MAC address');
 }
 
-function validIPv4(value) {
+function parseIPv4(value) {
 	var parts = trimValue(value).match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+	var octets = [];
 
 	if (!parts)
-		return false;
+		return null;
 
 	for (var i = 1; i <= 4; i++) {
 		var number = +parts[i];
 
-		if (number > 255)
+		if (number < 0 || number > 255)
+			return null;
+
+		octets.push(number);
+	}
+
+	return octets;
+}
+
+function validIPv4(value) {
+	return parseIPv4(value) != null;
+}
+
+function ipv4ToInt(octets) {
+	return (((octets[0] * 256 + octets[1]) * 256 + octets[2]) * 256 + octets[3]);
+}
+
+function validCidrTarget(value) {
+	var parts = trimValue(value).split('/');
+	var prefix;
+
+	if (parts.length != 2 || !parseIPv4(parts[0]) || !/^\d+$/.test(parts[1]))
+		return false;
+
+	prefix = +parts[1];
+
+	return prefix >= 0 && prefix <= 32;
+}
+
+function validRangeTarget(value) {
+	var parts = trimValue(value).split('-');
+	var start, end, last;
+
+	if (parts.length != 2)
+		return false;
+
+	start = parseIPv4(parts[0]);
+
+	if (!start)
+		return false;
+
+	if (/^\d+$/.test(trimValue(parts[1]))) {
+		last = +trimValue(parts[1]);
+
+		if (last < 0 || last > 255)
+			return false;
+
+		end = [ start[0], start[1], start[2], last ];
+	}
+	else {
+		end = parseIPv4(parts[1]);
+
+		if (!end)
 			return false;
 	}
 
-	return true;
+	return ipv4ToInt(start) <= ipv4ToInt(end);
+}
+
+function validIpTarget(value) {
+	value = trimValue(value);
+
+	if (value.indexOf('-') > -1)
+		return validRangeTarget(value);
+
+	if (value.indexOf('/') > -1)
+		return validCidrTarget(value);
+
+	return validIPv4(value);
 }
 
 function validTime(value) {
@@ -236,7 +303,7 @@ return view.extend({
 		var m, s, o;
 
 		m = new form.Map(CONFIG, _('Network speed limit'),
-			_('Users can limit the network speed for uploading/downloading through MAC, IP, and IP segments (192.168.10.100-192.168.10.200). The speed unit is MB/second.'));
+			_('Users can limit the network speed for uploading/downloading through MAC, IP, and IP segments (192.168.10.100-200). The speed unit is MB/second.'));
 
 		s = m.section(form.TypedSection, MAIN_SECTION);
 		s.anonymous = true;

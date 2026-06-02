@@ -47,6 +47,29 @@ function validIPv4(value) {
 	return true;
 }
 
+function ipv4ToNumber(value) {
+	var parts = trimValue(value).split('.');
+
+	return (+parts[0]) * 16777216 + (+parts[1]) * 65536 + (+parts[2]) * 256 + (+parts[3]);
+}
+
+function validIPv4Range(start, end) {
+	return validIPv4(start) && validIPv4(end) && ipv4ToNumber(start) <= ipv4ToNumber(end);
+}
+
+function validIPv4ShortRange(start, end) {
+	var endOctet = trimValue(end);
+	var startOctet;
+
+	if (!validIPv4(start) || !/^\d+$/.test(endOctet))
+		return false;
+
+	endOctet = +endOctet;
+	startOctet = +trimValue(start).split('.')[3];
+
+	return endOctet >= 0 && endOctet <= 255 && startOctet <= endOctet;
+}
+
 function validTarget(value) {
 	var match;
 
@@ -54,7 +77,7 @@ function validTarget(value) {
 		return true;
 
 	match = value.match(/^([^-]+)-(.+)$/);
-	if (match && validIPv4(match[1]) && validIPv4(match[2]))
+	if (match && (validIPv4Range(match[1], match[2]) || validIPv4ShortRange(match[1], match[2])))
 		return true;
 
 	match = value.match(/^([^/]+)\/(\d+)$/);
@@ -82,7 +105,7 @@ function validateTarget(section_id, value) {
 	if (looksLikeBadMac(value))
 		return _('MAC address must use colon-separated format');
 
-	return _('Invalid IP/MAC format');
+	return _('Please enter a valid IPv4, CIDR, IP range (192.168.10.100-200), or MAC address');
 }
 
 function validTime(value) {
@@ -262,7 +285,7 @@ return view.extend({
 		var m, s, o;
 
 		m = new form.Map(CONFIG, _('Internet time control'),
-			_('Users can limit their internet usage time through MAC and IP, with available IP ranges such as 192.168.110.00 to 192.168.10.200,Managed devices will be unable to access the soft router\'s administrative interface!') +
+			_('Users can limit their internet usage time through MAC and IP, with available IP ranges such as 192.168.10.100-200,Managed devices will be unable to access the soft router\'s administrative interface!') +
 			'<br />' +
 			_('Set viewing or rest time to 0 to block for the whole start and stop time range. When both are greater than 0, the viewing and rest loop runs only inside that range; outside it, no control is applied.'));
 

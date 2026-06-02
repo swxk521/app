@@ -205,6 +205,40 @@ int_to_ip() {
     echo "$(((num / 16777216) % 256)).$(((num / 65536) % 256)).$(((num / 256) % 256)).$((num % 256))"
 }
 
+ip_range_to_bounds() {
+    local start_ip=$1
+    local end_spec=$2
+    local end_ip prefix start_octet end_octet start_num end_num
+
+    valid_ipv4 "$start_ip" || return 1
+
+    if valid_ipv4 "$end_spec"; then
+        end_ip=$end_spec
+    else
+        case "$end_spec" in
+            ''|*[!0-9]*)
+                return 1
+                ;;
+        esac
+
+        [ "${#end_spec}" -le 3 ] || return 1
+        end_octet=$(to_dec "$end_spec")
+        [ "$end_octet" -le 255 ] || return 1
+
+        start_octet=$(to_dec "${start_ip##*.}")
+        [ "$start_octet" -le "$end_octet" ] || return 1
+
+        prefix=${start_ip%.*}
+        end_ip="${prefix}.${end_octet}"
+    fi
+
+    start_num=$(ip_to_int "$start_ip")
+    end_num=$(ip_to_int "$end_ip")
+
+    [ "$start_num" -le "$end_num" ] || return 1
+    echo "$start_num $end_num"
+}
+
 valid_minutes() {
     case "$1" in
         ''|*[!0-9]*)
@@ -571,7 +605,7 @@ cycle_should_block() {
 ip_target_to_bounds() {
     local target=$1
     local start_ip end_ip ip mask
-    local start_num end_num ip_num netmask hostmask
+    local bounds start_num end_num ip_num netmask hostmask
 
     if valid_ipv4 "$target"; then
         ip_num=$(ip_to_int "$target")
@@ -584,14 +618,8 @@ ip_target_to_bounds() {
         start_ip=${target%-*}
         end_ip=${target#*-}
 
-        valid_ipv4 "$start_ip" || return 1
-        valid_ipv4 "$end_ip" || return 1
-
-        start_num=$(ip_to_int "$start_ip")
-        end_num=$(ip_to_int "$end_ip")
-
-        [ "$start_num" -le "$end_num" ] || return 1
-        echo "$start_num $end_num"
+        bounds=$(ip_range_to_bounds "$start_ip" "$end_ip") || return 1
+        echo "$bounds"
         return 0
         ;;
     esac
@@ -660,7 +688,7 @@ valid_mac() {
 get_target_info() {
     local target=$1
     local start_ip end_ip ip mask mac
-    local start_num end_num
+    local bounds start_num end_num
 
     if valid_ipv4 "$target"; then
         echo "ip $target"
@@ -672,18 +700,15 @@ get_target_info() {
         start_ip=${target%-*}
         end_ip=${target#*-}
 
-        valid_ipv4 "$start_ip" || return 1
-        valid_ipv4 "$end_ip" || return 1
-
-        start_num=$(ip_to_int "$start_ip")
-        end_num=$(ip_to_int "$end_ip")
-
-        [ "$start_num" -le "$end_num" ] || return 1
+        bounds=$(ip_range_to_bounds "$start_ip" "$end_ip") || return 1
+        set -- $bounds
+        start_num=$1
+        end_num=$2
 
         if [ "$start_num" -eq "$end_num" ]; then
-            echo "ip $start_ip"
+            echo "ip $(int_to_ip "$start_num")"
         else
-            echo "ip $target"
+            echo "ip $(int_to_ip "$start_num")-$(int_to_ip "$end_num")"
         fi
 
         return 0

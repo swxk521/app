@@ -17,8 +17,8 @@ msgstr "未运行"
 msgid "Running"
 msgstr "已运行"
 
-msgid "Users can limit the network speed for uploading/downloading through MAC, IP, and IP segments (192.168.10.100-192.168.10.200). The speed unit is MB/second."
-msgstr "用户可以通过MAC、IP、IP段（192.168.10.100-192.168.10.200),限制上传/下载的网络速度。速度单位为MB/秒。"
+msgid "Users can limit the network speed for uploading/downloading through MAC, IP, and IP segments (192.168.10.100-200). The speed unit is MB/second."
+msgstr "用户可以通过MAC、IP、IP段（192.168.10.100-200）限制上传/下载的网络速度。速度单位为MB/秒。"
 
 msgid "IP/MAC"
 msgstr "IP/MAC"
@@ -28,6 +28,9 @@ msgstr "请填写 IP/MAC"
 
 msgid "Please enter MAC in xx:xx:xx:xx:xx:xx format"
 msgstr "请输入 xx:xx:xx:xx:xx:xx 格式的 MAC 地址"
+
+msgid "Please enter a valid IPv4, CIDR, IP range (192.168.10.100-200), or MAC address"
+msgstr "请输入有效的 IPv4、CIDR、IP 段（192.168.10.100-200）或 MAC 地址"
 
 msgid "DownloadsMB/s"
 msgstr "下载速度MB/s"

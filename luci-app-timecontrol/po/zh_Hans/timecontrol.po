@@ -46,8 +46,8 @@ msgstr "未运行"
 msgid "RUNNING"
 msgstr "运行中"
 
-msgid "Users can limit their internet usage time through MAC and IP, with available IP ranges such as 192.168.110.00 to 192.168.10.200,Managed devices will be unable to access the soft router's administrative interface!"
-msgstr "可以通过 MAC、IP 限制用户上网时间，可用 IP 范围如：192.168.10.100-192.168.10.200，被管控的机器将无法连接上软路由后台！"
+msgid "Users can limit their internet usage time through MAC and IP, with available IP ranges such as 192.168.10.100-200,Managed devices will be unable to access the soft router's administrative interface!"
+msgstr "可以通过 MAC、IP 限制用户上网时间，可用 IP 范围如：192.168.10.100-200，被管控的机器将无法连接上软路由后台！"
 
 msgid "Set viewing or rest time to 0 to block for the whole start and stop time range. When both are greater than 0, the viewing and rest loop runs only inside that range; outside it, no control is applied."
 msgstr "观看时间或休息时间设置为 0 时，在起控和停控时间段内整段禁止；两者都大于 0 时，只在该时间段内执行观看和休息循环，超出时间段不执行控制。"
@@ -61,8 +61,8 @@ msgstr "请填写 IP/MAC"
 msgid "MAC address must use colon-separated format"
 msgstr "MAC 地址必须使用冒号分隔格式，如 aa:bb:cc:dd:ee:ff"
 
-msgid "Invalid IP/MAC format"
-msgstr "IP/MAC 格式不正确"
+msgid "Please enter a valid IPv4, CIDR, IP range (192.168.10.100-200), or MAC address"
+msgstr "请输入有效的 IPv4、CIDR、IP 段（192.168.10.100-200）或 MAC 地址"
 
 msgid "Comment"
 msgstr "备注"
