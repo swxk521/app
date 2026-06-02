@@ -56,6 +56,9 @@ msgstr "请输入 HH:MM 格式的时间"
 msgid "Start control time must be earlier than stop control time"
 msgstr "起控时间必须早于停控时间"
 
+msgid "Please enter 0 or weekdays from 1 to 7 separated by commas"
+msgstr "请输入 0 或用英文逗号分隔的 1 到 7"
+
 msgid "Week Day(1~7)"
 msgstr "星期(1~7)"
 

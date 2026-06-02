@@ -110,6 +110,20 @@ function validateTimePair(option, section_id, value) {
 	return true;
 }
 
+function validateWeekDays(section_id, value) {
+	value = trimValue(value);
+
+	if (value == '')
+		return _('Please enter 0 or weekdays from 1 to 7 separated by commas');
+
+	if (value == '0')
+		return true;
+
+	return /^([1-7]\s*,\s*)*[1-7]$/.test(value)
+		? true
+		: _('Please enter 0 or weekdays from 1 to 7 separated by commas');
+}
+
 function ipToString(value) {
 	if (typeof(value) == 'string')
 		return value.replace(/\/\d+$/, '');
@@ -250,7 +264,7 @@ return view.extend({
 		o.editable = true;
 		o.rmempty = false;
 		o.default = '0';
-		o.width = '5em';
+		o.width = '3em';
 
 		o = s.option(form.Value, 'mac', _('IP/MAC'));
 		o.editable = true;
@@ -267,13 +281,13 @@ return view.extend({
 		o.editable = true;
 		o.placeholder = '0.1';
 		o.default = '0.1';
-		o.width = '7em';
+		o.width = '6em';
 
 		o = s.option(form.Value, 'upload', _('Uploads'));
 		o.editable = true;
 		o.placeholder = '0.1';
 		o.default = '0.1';
-		o.width = '7em';
+		o.width = '6em';
 
 		o = s.option(form.Value, 'timestart', _('Start control time'));
 		o.editable = true;
@@ -295,11 +309,11 @@ return view.extend({
 			return validateTimePair(this, section_id, value);
 		};
 
-		o = s.option(form.ListValue, 'week', _('Week Day(1~7)'));
+		o = s.option(form.Value, 'week', _('Week Day(1~7)'));
 		o.editable = true;
-		o.rmempty = true;
-		o.default = '0';
-		o.width = '7em';
+		o.rmempty = false;
+		o.width = '15em';
+		o.validate = validateWeekDays;
 		addWeekValues(o);
 
 		return m.render().then(function(node) {
