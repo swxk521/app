@@ -290,6 +290,22 @@ return view.extend({
 			uci.set(CONFIG, section_id, 'mac', normalizeTarget(value));
 		};
 
+		o = s.option(form.Value, 'watchtime', _('Viewing time'));
+		o.editable = true;
+		o.placeholder = '15';
+		o.default = '15';
+		o.rmempty = true;
+		o.width = '7em';
+		o.validate = validateMinutes;
+
+		o = s.option(form.Value, 'resttime', _('Rest time'));
+		o.editable = true;
+		o.placeholder = '5';
+		o.default = '5';
+		o.rmempty = true;
+		o.width = '7em';
+		o.validate = validateMinutes;
+
 		o = s.option(form.Value, 'timestart', _('Start control time'));
 		o.editable = true;
 		o.placeholder = '00:00';
@@ -309,22 +325,6 @@ return view.extend({
 		o.validate = function(section_id, value) {
 			return validateTimePair(this, section_id, value);
 		};
-
-		o = s.option(form.Value, 'watchtime', _('Viewing time'));
-		o.editable = true;
-		o.placeholder = '15';
-		o.default = '15';
-		o.rmempty = true;
-		o.width = '7em';
-		o.validate = validateMinutes;
-
-		o = s.option(form.Value, 'resttime', _('Rest time'));
-		o.editable = true;
-		o.placeholder = '5';
-		o.default = '5';
-		o.rmempty = true;
-		o.width = '7em';
-		o.validate = validateMinutes;
 
 		o = s.option(form.ListValue, 'week', _('Week Day(1~7)'));
 		o.editable = true;
