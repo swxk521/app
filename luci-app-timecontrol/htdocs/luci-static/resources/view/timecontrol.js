@@ -277,12 +277,12 @@ return view.extend({
 		o.editable = true;
 		o.rmempty = false;
 		o.default = '0';
-		o.width = '6em';
+		o.width = '5em';
 
 		o = s.option(form.Value, 'mac', _('IP/MAC'));
 		o.editable = true;
 		o.rmempty = false;
-		o.width = '14em';
+		o.width = '15em';
 		for (var i = 0; i < devices.length; i++)
 			o.value(devices[i][0], devices[i][1]);
 		o.validate = validateTarget;
@@ -315,7 +315,7 @@ return view.extend({
 		o.placeholder = '15';
 		o.default = '15';
 		o.rmempty = true;
-		o.width = '6em';
+		o.width = '7em';
 		o.validate = validateMinutes;
 
 		o = s.option(form.Value, 'resttime', _('Rest time'));
@@ -323,14 +323,14 @@ return view.extend({
 		o.placeholder = '5';
 		o.default = '5';
 		o.rmempty = true;
-		o.width = '6em';
+		o.width = '7em';
 		o.validate = validateMinutes;
 
 		o = s.option(form.ListValue, 'week', _('Week Day(1~7)'));
 		o.editable = true;
 		o.rmempty = true;
 		o.default = '0';
-		o.width = '8em';
+		o.width = '7em';
 		addWeekValues(o);
 
 		return m.render().then(function(node) {
