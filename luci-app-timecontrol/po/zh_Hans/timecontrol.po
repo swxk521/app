@@ -73,11 +73,11 @@ msgstr "起控时间"
 msgid "Stop control time"
 msgstr "停控时间"
 
-msgid "Viewing time"
-msgstr "观看时间"
+msgid "Viewing time(minute)"
+msgstr "观看时间(分)"
 
-msgid "Rest time"
-msgstr "休息时间"
+msgid "Rest time(minute)"
+msgstr "休息时间(分)"
 
 msgid "Please enter a non-negative integer"
 msgstr "请输入大于等于 0 的整数"

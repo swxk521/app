@@ -305,7 +305,7 @@ return view.extend({
 			uci.set(CONFIG, section_id, 'mac', normalizeTarget(value));
 		};
 
-		o = s.option(form.Value, 'watchtime', _('Viewing time'));
+		o = s.option(form.Value, 'watchtime', _('Viewing time(minute)'));
 		o.editable = true;
 		o.placeholder = '0';
 		o.default = '0';
@@ -313,7 +313,7 @@ return view.extend({
 		o.width = '6em';
 		o.validate = validateMinutes;
 
-		o = s.option(form.Value, 'resttime', _('Rest time'));
+		o = s.option(form.Value, 'resttime', _('Rest time(minute)'));
 		o.editable = true;
 		o.placeholder = '0';
 		o.default = '0';

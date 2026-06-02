@@ -277,13 +277,13 @@ return view.extend({
 			uci.set(CONFIG, section_id, 'mac', normalizeTarget(value));
 		};
 
-		o = s.option(form.Value, 'download', _('Downloads'));
+		o = s.option(form.Value, 'download', _('DownloadsMB/s'));
 		o.editable = true;
 		o.placeholder = '0.1';
 		o.default = '0.1';
 		o.width = '6em';
 
-		o = s.option(form.Value, 'upload', _('Uploads'));
+		o = s.option(form.Value, 'upload', _('UploadsMB/s'));
 		o.editable = true;
 		o.placeholder = '0.1';
 		o.default = '0.1';

@@ -29,20 +29,14 @@ msgstr "请填写 IP/MAC"
 msgid "Please enter MAC in xx:xx:xx:xx:xx:xx format"
 msgstr "请输入 xx:xx:xx:xx:xx:xx 格式的 MAC 地址"
 
-msgid "Downloads"
-msgstr "下载速度"
+msgid "DownloadsMB/s"
+msgstr "下载速度MB/s"
 
-msgid "Uploads"
-msgstr "上传速度"
+msgid "UploadsMB/s"
+msgstr "上传速度MB/s"
 
 msgid "Comment"
 msgstr "备注"
-
-msgid "Upload bandwidth(Mbit/s)"
-msgstr "上传总带宽(Mbit/s)"
-
-msgid "Download bandwidth(Mbit/s)"
-msgstr "下载总带宽(Mbit/s)"
 
 msgid "Start control time"
 msgstr "起控时间"
