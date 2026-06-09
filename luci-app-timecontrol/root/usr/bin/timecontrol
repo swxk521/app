@@ -524,9 +524,10 @@ target_key_is_online() {
 }
 
 nft_counter_exists() {
-    local counter=$1
+    local family=$1
+    local counter=$2
 
-    nft list counter ip "$NFT_TABLE" "$counter" >/dev/null 2>&1
+    nft list counter "$family" "$NFT_TABLE" "$counter" >/dev/null 2>&1
 }
 
 traffic_counter_name() {
@@ -534,9 +535,11 @@ traffic_counter_name() {
 }
 
 traffic_rule_exists() {
-    local comment=$1
+    local family=$1
+    local chain=$2
+    local comment=$3
 
-    nft -a list chain ip "$NFT_TABLE" forward | grep -Fq "comment \"$comment\""
+    nft -a list chain "$family" "$NFT_TABLE" "$chain" | grep -Fq "comment \"$comment\""
 }
 
 ensure_ip_traffic_counter() {
@@ -546,24 +549,25 @@ ensure_ip_traffic_counter() {
     valid_ipv4 "$ip" || return 1
 
     counter=$(traffic_counter_name "ip_$ip")
-    nft_counter_exists "$counter" || nft add counter ip "$NFT_TABLE" "$counter" || return 1
+    nft_counter_exists ip "$counter" || nft add counter ip "$NFT_TABLE" "$counter" || return 1
 
     comment="${counter}_src"
-    traffic_rule_exists "$comment" || \
+    traffic_rule_exists ip forward "$comment" || \
         nft add rule ip "$NFT_TABLE" forward ip saddr "$ip" counter name "$counter" comment "$comment" || return 1
 
     comment="${counter}_dst"
-    traffic_rule_exists "$comment" || \
+    traffic_rule_exists ip forward "$comment" || \
         nft add rule ip "$NFT_TABLE" forward ip daddr "$ip" counter name "$counter" comment "$comment" || return 1
 
     return 0
 }
 
 read_traffic_counter_bytes() {
-    local counter=$1
+    local family=$1
+    local counter=$2
     local bytes
 
-    bytes=$(nft list counter ip "$NFT_TABLE" "$counter" |
+    bytes=$(nft list counter "$family" "$NFT_TABLE" "$counter" |
         awk '/bytes/ { for (i = 1; i <= NF; i++) if ($i == "bytes") { print $(i + 1); exit } }')
 
     sanitize_counter "$bytes"
@@ -579,7 +583,74 @@ ip_traffic_bytes() {
     }
 
     counter=$(traffic_counter_name "ip_$ip")
-    read_traffic_counter_bytes "$counter"
+    read_traffic_counter_bytes ip "$counter"
+}
+
+ensure_bridge_ip_traffic_counter() {
+    local ip=$1
+    local counter comment
+
+    valid_ipv4 "$ip" || return 1
+
+    counter=$(traffic_counter_name "bridge_ip_$ip")
+    nft_counter_exists bridge "$counter" || nft add counter bridge "$NFT_TABLE" "$counter" || return 1
+
+    comment="${counter}_src"
+    traffic_rule_exists bridge forward "$comment" || \
+        nft add rule bridge "$NFT_TABLE" forward ether type ip ip saddr "$ip" counter name "$counter" comment "$comment" || return 1
+
+    comment="${counter}_dst"
+    traffic_rule_exists bridge forward "$comment" || \
+        nft add rule bridge "$NFT_TABLE" forward ether type ip ip daddr "$ip" counter name "$counter" comment "$comment" || return 1
+
+    return 0
+}
+
+bridge_ip_traffic_bytes() {
+    local ip=$1
+    local counter
+
+    ensure_bridge_ip_traffic_counter "$ip" || {
+        echo 0
+        return 1
+    }
+
+    counter=$(traffic_counter_name "bridge_ip_$ip")
+    read_traffic_counter_bytes bridge "$counter"
+}
+
+ensure_bridge_mac_traffic_counter() {
+    local mac=$1
+    local counter comment
+
+    valid_mac "$mac" || return 1
+    mac=$(normalize_mac "$mac")
+
+    counter=$(traffic_counter_name "bridge_mac_$mac")
+    nft_counter_exists bridge "$counter" || nft add counter bridge "$NFT_TABLE" "$counter" || return 1
+
+    comment="${counter}_src"
+    traffic_rule_exists bridge forward "$comment" || \
+        nft add rule bridge "$NFT_TABLE" forward ether saddr "$mac" counter name "$counter" comment "$comment" || return 1
+
+    comment="${counter}_dst"
+    traffic_rule_exists bridge forward "$comment" || \
+        nft add rule bridge "$NFT_TABLE" forward ether daddr "$mac" counter name "$counter" comment "$comment" || return 1
+
+    return 0
+}
+
+bridge_mac_traffic_bytes() {
+    local mac=$1
+    local counter
+
+    ensure_bridge_mac_traffic_counter "$mac" || {
+        echo 0
+        return 1
+    }
+
+    counter=$(traffic_counter_name "bridge_mac_$(normalize_mac "$mac")")
+    read_traffic_counter_bytes bridge "$counter"
 }
 
 target_traffic_bytes() {
@@ -596,7 +667,15 @@ target_traffic_bytes() {
                 echo 0
                 return 1
             }
-            ip_traffic_bytes "$target"
+
+            total=0
+            bytes=$(ip_traffic_bytes "$target")
+            bytes=$(sanitize_counter "$bytes")
+            total=$((total + bytes))
+            bytes=$(bridge_ip_traffic_bytes "$target")
+            bytes=$(sanitize_counter "$bytes")
+            total=$((total + bytes))
+            echo "$total"
             ;;
         bridge)
             total=0
@@ -607,6 +686,10 @@ target_traffic_bytes() {
                 bytes=$(sanitize_counter "$bytes")
                 total=$((total + bytes))
             done
+
+            bytes=$(bridge_mac_traffic_bytes "$target")
+            bytes=$(sanitize_counter "$bytes")
+            total=$((total + bytes))
 
             echo "$total"
             ;;

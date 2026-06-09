@@ -289,7 +289,7 @@ return view.extend({
 			'<br />' +
 			_('Set viewing or rest time to 0 to block for the whole start and stop time range. When both are greater than 0, the viewing and rest loop runs only inside that range; outside it, no control is applied.') +
 			'<br />' +
-			_('Viewing time is counted only when forwarded traffic exceeds the threshold. Set threshold to 0 to count any forwarded traffic.'));
+			_('Viewing time is counted only when routed or bridged forwarding traffic exceeds the threshold. Set threshold to 0 to count any forwarding traffic.'));
 
 		s = m.section(form.TypedSection, MAIN_SECTION);
 		s.anonymous = true;
