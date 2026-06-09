@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         arch:
-          - aarch64_generic
+          - x86_64
         sdk:
           - openwrt-24.10
           - master
