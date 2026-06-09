@@ -13,10 +13,12 @@ TARGETLIST="/var/$NAME.targetlist"
 LOG_FILE="/var/log/$NAME.log"
 LOCK_FILE="/var/run/$NAME.lock"
 LOOP_STATE_DIR="/var/run/$NAME"
+TRAFFIC_THRESHOLD_KB_DEFAULT=512
 
 NFT_TABLE="$NAME"
 NFT_IP_SET="${NAME}_blacklist_ip"
 NFT_BRIDGE_SET="${NAME}_blacklist_mac"
+NFT_TRAFFIC_PREFIX="${NAME}_traffic"
 
 config_get_type() {
     local ret
@@ -272,6 +274,16 @@ sanitize_counter() {
     esac
 }
 
+traffic_threshold_bytes() {
+    local threshold_kb
+
+    threshold_kb=$(config_t_get timecontrol traffic_threshold 0 "$TRAFFIC_THRESHOLD_KB_DEFAULT")
+    valid_minutes "$threshold_kb" || threshold_kb=$TRAFFIC_THRESHOLD_KB_DEFAULT
+    threshold_kb=$(to_dec "$threshold_kb")
+
+    echo $((threshold_kb * 1024))
+}
+
 loop_state_get() {
     local file=$1
     local key=$2
@@ -286,8 +298,9 @@ loop_signature() {
     local target_key=$1
     local watch_limit=$2
     local rest_limit=$3
+    local traffic_threshold=$4
 
-    printf '%s|%s|%s\n' "$target_key" "$watch_limit" "$rest_limit"
+    printf '%s|%s|%s|%s\n' "$target_key" "$watch_limit" "$rest_limit" "$traffic_threshold"
 }
 
 save_loop_state() {
@@ -298,6 +311,7 @@ save_loop_state() {
     local rest_left=$5
     local offline_minutes=$6
     local last_tick=$7
+    local last_bytes=$8
     local file
 
     ensure_loop_state_dir
@@ -311,6 +325,7 @@ save_loop_state() {
         echo "rest_left=$rest_left"
         echo "offline_minutes=$offline_minutes"
         echo "last_tick=$last_tick"
+        echo "last_bytes=$last_bytes"
     } > "$file"
 }
 
@@ -329,6 +344,10 @@ reset_loop_states_for_id() {
 }
 
 list_known_ipv4s() {
+    if [ -r /tmp/dhcp.leases ]; then
+        awk '$3 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $3 }' /tmp/dhcp.leases
+    fi
+
     if [ -r /proc/net/arp ]; then
         awk 'NR > 1 && $4 != "00:00:00:00:00:00" { print $1 }' /proc/net/arp
     fi
@@ -345,6 +364,10 @@ list_ips_by_mac() {
     local mac
 
     mac=$(normalize_mac "$1")
+
+    if [ -r /tmp/dhcp.leases ]; then
+        awk -v mac="$mac" 'tolower($2) == mac { print $3 }' /tmp/dhcp.leases
+    fi
 
     if [ -r /proc/net/arp ]; then
         awk -v mac="$mac" 'NR > 1 && tolower($4) == mac { print $1 }' /proc/net/arp
@@ -500,6 +523,100 @@ target_key_is_online() {
     esac
 }
 
+nft_counter_exists() {
+    local counter=$1
+
+    nft list counter ip "$NFT_TABLE" "$counter" >/dev/null 2>&1
+}
+
+traffic_counter_name() {
+    printf '%s_%s\n' "$NFT_TRAFFIC_PREFIX" "$(printf '%s' "$1" | sed 's/[^A-Za-z0-9_]/_/g')"
+}
+
+traffic_rule_exists() {
+    local comment=$1
+
+    nft -a list chain ip "$NFT_TABLE" forward | grep -Fq "comment \"$comment\""
+}
+
+ensure_ip_traffic_counter() {
+    local ip=$1
+    local counter comment
+
+    valid_ipv4 "$ip" || return 1
+
+    counter=$(traffic_counter_name "ip_$ip")
+    nft_counter_exists "$counter" || nft add counter ip "$NFT_TABLE" "$counter" || return 1
+
+    comment="${counter}_src"
+    traffic_rule_exists "$comment" || \
+        nft add rule ip "$NFT_TABLE" forward ip saddr "$ip" counter name "$counter" comment "$comment" || return 1
+
+    comment="${counter}_dst"
+    traffic_rule_exists "$comment" || \
+        nft add rule ip "$NFT_TABLE" forward ip daddr "$ip" counter name "$counter" comment "$comment" || return 1
+
+    return 0
+}
+
+read_traffic_counter_bytes() {
+    local counter=$1
+    local bytes
+
+    bytes=$(nft list counter ip "$NFT_TABLE" "$counter" |
+        awk '/bytes/ { for (i = 1; i <= NF; i++) if ($i == "bytes") { print $(i + 1); exit } }')
+
+    sanitize_counter "$bytes"
+}
+
+ip_traffic_bytes() {
+    local ip=$1
+    local counter
+
+    ensure_ip_traffic_counter "$ip" || {
+        echo 0
+        return 1
+    }
+
+    counter=$(traffic_counter_name "ip_$ip")
+    read_traffic_counter_bytes "$counter"
+}
+
+target_traffic_bytes() {
+    local target_key=$1
+    local table target ip bytes total
+
+    set -- $target_key
+    table=$1
+    target=$2
+
+    case "$table" in
+        ip)
+            valid_ipv4 "$target" || {
+                echo 0
+                return 1
+            }
+            ip_traffic_bytes "$target"
+            ;;
+        bridge)
+            total=0
+
+            for ip in $(list_ips_by_mac "$target" | sort -u); do
+                valid_ipv4 "$ip" || continue
+                bytes=$(ip_traffic_bytes "$ip")
+                bytes=$(sanitize_counter "$bytes")
+                total=$((total + bytes))
+            done
+
+            echo "$total"
+            ;;
+        *)
+            echo 0
+            return 1
+            ;;
+    esac
+}
+
 cycle_target_should_block() {
     local state_id=$1
     local target_key=$2
@@ -507,14 +624,18 @@ cycle_target_should_block() {
     local rest_limit=$4
     local signature state_file stored_signature
     local current_tick last_tick elapsed mode watch_used rest_left offline_minutes
+    local traffic_threshold current_bytes last_bytes traffic_delta traffic_limit active
 
     if ! positive_minutes "$watch_limit" || ! positive_minutes "$rest_limit"; then
         reset_loop_state "$state_id"
         return 1
     fi
 
-    signature=$(loop_signature "$target_key" "$watch_limit" "$rest_limit")
+    traffic_threshold=$(traffic_threshold_bytes)
+    signature=$(loop_signature "$target_key" "$watch_limit" "$rest_limit" "$traffic_threshold")
     current_tick=$(current_minute_tick)
+    current_bytes=$(target_traffic_bytes "$target_key")
+    current_bytes=$(sanitize_counter "$current_bytes")
 
     ensure_loop_state_dir
     state_file=$(loop_state_file "$state_id")
@@ -526,12 +647,14 @@ cycle_target_should_block() {
         rest_left=$(sanitize_counter "$(loop_state_get "$state_file" rest_left "0")")
         offline_minutes=$(sanitize_counter "$(loop_state_get "$state_file" offline_minutes "0")")
         last_tick=$(sanitize_counter "$(loop_state_get "$state_file" last_tick "$current_tick")")
+        last_bytes=$(sanitize_counter "$(loop_state_get "$state_file" last_bytes "$current_bytes")")
     else
         mode="watch"
         watch_used=0
         rest_left=0
         offline_minutes=0
         last_tick=$current_tick
+        last_bytes=$current_bytes
     fi
 
     case "$mode" in
@@ -554,12 +677,28 @@ cycle_target_should_block() {
             fi
         fi
 
-        save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
+        save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick" "$current_bytes"
         [ "$mode" = "rest" ] && [ "$rest_left" -gt 0 ]
         return $?
     fi
 
-    if target_key_is_online "$target_key"; then
+    active=0
+    if [ "$elapsed" -gt 0 ]; then
+        if [ "$current_bytes" -ge "$last_bytes" ]; then
+            traffic_delta=$((current_bytes - last_bytes))
+        else
+            traffic_delta=0
+        fi
+
+        if [ "$traffic_threshold" -gt 0 ]; then
+            traffic_limit=$((traffic_threshold * elapsed))
+            [ "$traffic_delta" -ge "$traffic_limit" ] && active=1
+        else
+            [ "$traffic_delta" -gt 0 ] && active=1
+        fi
+    fi
+
+    if [ "$active" -eq 1 ]; then
         offline_minutes=0
 
         if [ "$elapsed" -gt 0 ]; then
@@ -572,7 +711,7 @@ cycle_target_should_block() {
             rest_left=$rest_limit
             offline_minutes=0
             dbg "Target $target_key reached viewing limit, resting for ${rest_limit}m"
-            save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
+            save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick" "$current_bytes"
             return 0
         fi
     else
@@ -587,7 +726,7 @@ cycle_target_should_block() {
         fi
     fi
 
-    save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
+    save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick" "$current_bytes"
     return 1
 }
 

@@ -13,6 +13,9 @@ msgstr "启用"
 msgid "Timecontrol switch"
 msgstr "开关"
 
+msgid "Traffic threshold(KB/min)"
+msgstr "流量阈值(KB/分钟)"
+
 msgid "Monday"
 msgstr "周一"
 
@@ -51,6 +54,9 @@ msgstr "可以通过 MAC、IP 限制用户上网时间，可用 IP 范围如：1
 
 msgid "Set viewing or rest time to 0 to block for the whole start and stop time range. When both are greater than 0, the viewing and rest loop runs only inside that range; outside it, no control is applied."
 msgstr "观看时间或休息时间设置为 0 时，在起控和停控时间段内整段禁止；两者都大于 0 时，只在该时间段内执行观看和休息循环，超出时间段不执行控制。"
+
+msgid "Viewing time is counted only when forwarded traffic exceeds the threshold. Set threshold to 0 to count any forwarded traffic."
+msgstr "只有转发流量超过阈值时才累计观看时间；阈值设为 0 时，有任意转发流量就计时。"
 
 msgid "IP/MAC"
 msgstr "IP/MAC"
