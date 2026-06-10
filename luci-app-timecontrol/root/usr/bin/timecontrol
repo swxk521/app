@@ -7,18 +7,17 @@ crrun=$1
 crid=$2
 NAME=timecontrol
 DEBUG=0
+IP_CYCLE_PING_JOBS=20
 
 IDLIST="/var/$NAME.idlist"
 TARGETLIST="/var/$NAME.targetlist"
 LOG_FILE="/var/log/$NAME.log"
 LOCK_FILE="/var/run/$NAME.lock"
 LOOP_STATE_DIR="/var/run/$NAME"
-TRAFFIC_THRESHOLD_KB_DEFAULT=512
 
 NFT_TABLE="$NAME"
 NFT_IP_SET="${NAME}_blacklist_ip"
 NFT_BRIDGE_SET="${NAME}_blacklist_mac"
-NFT_TRAFFIC_PREFIX="${NAME}_traffic"
 
 config_get_type() {
     local ret
@@ -274,16 +273,6 @@ sanitize_counter() {
     esac
 }
 
-traffic_threshold_bytes() {
-    local threshold_kb
-
-    threshold_kb=$(config_t_get timecontrol traffic_threshold 0 "$TRAFFIC_THRESHOLD_KB_DEFAULT")
-    valid_minutes "$threshold_kb" || threshold_kb=$TRAFFIC_THRESHOLD_KB_DEFAULT
-    threshold_kb=$(to_dec "$threshold_kb")
-
-    echo $((threshold_kb * 1024))
-}
-
 loop_state_get() {
     local file=$1
     local key=$2
@@ -298,9 +287,8 @@ loop_signature() {
     local target_key=$1
     local watch_limit=$2
     local rest_limit=$3
-    local traffic_threshold=$4
 
-    printf '%s|%s|%s|%s\n' "$target_key" "$watch_limit" "$rest_limit" "$traffic_threshold"
+    printf '%s|%s|%s\n' "$target_key" "$watch_limit" "$rest_limit"
 }
 
 save_loop_state() {
@@ -311,7 +299,6 @@ save_loop_state() {
     local rest_left=$5
     local offline_minutes=$6
     local last_tick=$7
-    local last_bytes=$8
     local file
 
     ensure_loop_state_dir
@@ -325,7 +312,6 @@ save_loop_state() {
         echo "rest_left=$rest_left"
         echo "offline_minutes=$offline_minutes"
         echo "last_tick=$last_tick"
-        echo "last_bytes=$last_bytes"
     } > "$file"
 }
 
@@ -344,16 +330,12 @@ reset_loop_states_for_id() {
 }
 
 list_known_ipv4s() {
-    if [ -r /tmp/dhcp.leases ]; then
-        awk '$3 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $3 }' /tmp/dhcp.leases
-    fi
-
     if [ -r /proc/net/arp ]; then
         awk 'NR > 1 && $4 != "00:00:00:00:00:00" { print $1 }' /proc/net/arp
     fi
 
     ip -4 neigh show 2>/dev/null |
-        awk '/lladdr/ && $0 !~ /FAILED|INCOMPLETE/ { print $1 }'
+        awk '/lladdr/ && /(^|[[:space:]])REACHABLE($|[[:space:]])/ { print $1 }'
 }
 
 normalize_mac() {
@@ -365,30 +347,43 @@ list_ips_by_mac() {
 
     mac=$(normalize_mac "$1")
 
-    if [ -r /tmp/dhcp.leases ]; then
-        awk -v mac="$mac" 'tolower($2) == mac { print $3 }' /tmp/dhcp.leases
-    fi
-
     if [ -r /proc/net/arp ]; then
         awk -v mac="$mac" 'NR > 1 && tolower($4) == mac { print $1 }' /proc/net/arp
     fi
 
     ip -4 neigh show 2>/dev/null |
-        awk -v mac="$mac" 'tolower($0) ~ ("lladdr " mac) && $0 !~ /FAILED|INCOMPLETE/ { print $1 }'
-}
-
-arp_ip_known() {
-    local ip=$1
-
-    [ -r /proc/net/arp ] || return 1
-    awk -v ip="$ip" 'NR > 1 && $1 == ip && $4 != "00:00:00:00:00:00" { found=1 } END { exit !found }' /proc/net/arp
+        awk -v mac="$mac" 'tolower($0) ~ ("lladdr " mac) && /(^|[[:space:]])REACHABLE($|[[:space:]])/ { print $1 }'
 }
 
 ip_neigh_online() {
     local ip=$1
 
     ip -4 neigh show 2>/dev/null |
-        awk -v ip="$ip" '$1 == ip && /lladdr/ && $0 !~ /FAILED|INCOMPLETE/ { found=1 } END { exit !found }'
+        awk -v ip="$ip" '$1 == ip && /lladdr/ && /(^|[[:space:]])REACHABLE($|[[:space:]])/ { found=1 } END { exit !found }'
+}
+
+ping_stable_online() {
+    local ip=$1
+
+    ping -c 10 -W 1 "$ip" 2>/dev/null |
+        awk '
+            /time=/ {
+                rtt = $0
+                sub(/^.*time=/, "", rtt)
+                sub(/[[:space:]]*ms.*$/, "", rtt)
+
+                if (rtt ~ /^[0-9]+([.][0-9]+)?$/) {
+                    rtt += 0
+                    if (count == 0 || rtt < min) min = rtt
+                    if (count == 0 || rtt > max) max = rtt
+                    count++
+                }
+            }
+            END {
+                if (count < 9) exit 1
+                if ((max - min) > 500) exit 1
+                exit 0
+            }'
 }
 
 ip_is_online() {
@@ -396,9 +391,8 @@ ip_is_online() {
 
     valid_ipv4 "$ip" || return 1
 
-    ping -c 1 -W 1 "$ip" >/dev/null 2>&1 && return 0
-    ip_neigh_online "$ip" && return 0
-    arp_ip_known "$ip"
+    ip_neigh_online "$ip" || return 1
+    ping_stable_online "$ip"
 }
 
 ip_target_online() {
@@ -523,183 +517,6 @@ target_key_is_online() {
     esac
 }
 
-nft_counter_exists() {
-    local family=$1
-    local counter=$2
-
-    nft list counter "$family" "$NFT_TABLE" "$counter" >/dev/null 2>&1
-}
-
-traffic_counter_name() {
-    printf '%s_%s\n' "$NFT_TRAFFIC_PREFIX" "$(printf '%s' "$1" | sed 's/[^A-Za-z0-9_]/_/g')"
-}
-
-traffic_rule_exists() {
-    local family=$1
-    local chain=$2
-    local comment=$3
-
-    nft -a list chain "$family" "$NFT_TABLE" "$chain" | grep -Fq "comment \"$comment\""
-}
-
-ensure_ip_traffic_counter() {
-    local ip=$1
-    local counter comment
-
-    valid_ipv4 "$ip" || return 1
-
-    counter=$(traffic_counter_name "ip_$ip")
-    nft_counter_exists ip "$counter" || nft add counter ip "$NFT_TABLE" "$counter" || return 1
-
-    comment="${counter}_src"
-    traffic_rule_exists ip forward "$comment" || \
-        nft add rule ip "$NFT_TABLE" forward ip saddr "$ip" counter name "$counter" comment "$comment" || return 1
-
-    comment="${counter}_dst"
-    traffic_rule_exists ip forward "$comment" || \
-        nft add rule ip "$NFT_TABLE" forward ip daddr "$ip" counter name "$counter" comment "$comment" || return 1
-
-    return 0
-}
-
-read_traffic_counter_bytes() {
-    local family=$1
-    local counter=$2
-    local bytes
-
-    bytes=$(nft list counter "$family" "$NFT_TABLE" "$counter" |
-        awk '/bytes/ { for (i = 1; i <= NF; i++) if ($i == "bytes") { print $(i + 1); exit } }')
-
-    sanitize_counter "$bytes"
-}
-
-ip_traffic_bytes() {
-    local ip=$1
-    local counter
-
-    ensure_ip_traffic_counter "$ip" || {
-        echo 0
-        return 1
-    }
-
-    counter=$(traffic_counter_name "ip_$ip")
-    read_traffic_counter_bytes ip "$counter"
-}
-
-ensure_bridge_ip_traffic_counter() {
-    local ip=$1
-    local counter comment
-
-    valid_ipv4 "$ip" || return 1
-
-    counter=$(traffic_counter_name "bridge_ip_$ip")
-    nft_counter_exists bridge "$counter" || nft add counter bridge "$NFT_TABLE" "$counter" || return 1
-
-    comment="${counter}_src"
-    traffic_rule_exists bridge forward "$comment" || \
-        nft add rule bridge "$NFT_TABLE" forward ether type ip ip saddr "$ip" counter name "$counter" comment "$comment" || return 1
-
-    comment="${counter}_dst"
-    traffic_rule_exists bridge forward "$comment" || \
-        nft add rule bridge "$NFT_TABLE" forward ether type ip ip daddr "$ip" counter name "$counter" comment "$comment" || return 1
-
-    return 0
-}
-
-bridge_ip_traffic_bytes() {
-    local ip=$1
-    local counter
-
-    ensure_bridge_ip_traffic_counter "$ip" || {
-        echo 0
-        return 1
-    }
-
-    counter=$(traffic_counter_name "bridge_ip_$ip")
-    read_traffic_counter_bytes bridge "$counter"
-}
-
-ensure_bridge_mac_traffic_counter() {
-    local mac=$1
-    local counter comment
-
-    valid_mac "$mac" || return 1
-    mac=$(normalize_mac "$mac")
-
-    counter=$(traffic_counter_name "bridge_mac_$mac")
-    nft_counter_exists bridge "$counter" || nft add counter bridge "$NFT_TABLE" "$counter" || return 1
-
-    comment="${counter}_src"
-    traffic_rule_exists bridge forward "$comment" || \
-        nft add rule bridge "$NFT_TABLE" forward ether saddr "$mac" counter name "$counter" comment "$comment" || return 1
-
-    comment="${counter}_dst"
-    traffic_rule_exists bridge forward "$comment" || \
-        nft add rule bridge "$NFT_TABLE" forward ether daddr "$mac" counter name "$counter" comment "$comment" || return 1
-
-    return 0
-}
-
-bridge_mac_traffic_bytes() {
-    local mac=$1
-    local counter
-
-    ensure_bridge_mac_traffic_counter "$mac" || {
-        echo 0
-        return 1
-    }
-
-    counter=$(traffic_counter_name "bridge_mac_$(normalize_mac "$mac")")
-    read_traffic_counter_bytes bridge "$counter"
-}
-
-target_traffic_bytes() {
-    local target_key=$1
-    local table target ip bytes total
-
-    set -- $target_key
-    table=$1
-    target=$2
-
-    case "$table" in
-        ip)
-            valid_ipv4 "$target" || {
-                echo 0
-                return 1
-            }
-
-            total=0
-            bytes=$(ip_traffic_bytes "$target")
-            bytes=$(sanitize_counter "$bytes")
-            total=$((total + bytes))
-            bytes=$(bridge_ip_traffic_bytes "$target")
-            bytes=$(sanitize_counter "$bytes")
-            total=$((total + bytes))
-            echo "$total"
-            ;;
-        bridge)
-            total=0
-
-            for ip in $(list_ips_by_mac "$target" | sort -u); do
-                valid_ipv4 "$ip" || continue
-                bytes=$(ip_traffic_bytes "$ip")
-                bytes=$(sanitize_counter "$bytes")
-                total=$((total + bytes))
-            done
-
-            bytes=$(bridge_mac_traffic_bytes "$target")
-            bytes=$(sanitize_counter "$bytes")
-            total=$((total + bytes))
-
-            echo "$total"
-            ;;
-        *)
-            echo 0
-            return 1
-            ;;
-    esac
-}
-
 cycle_target_should_block() {
     local state_id=$1
     local target_key=$2
@@ -707,18 +524,14 @@ cycle_target_should_block() {
     local rest_limit=$4
     local signature state_file stored_signature
     local current_tick last_tick elapsed mode watch_used rest_left offline_minutes
-    local traffic_threshold current_bytes last_bytes traffic_delta traffic_limit active
 
     if ! positive_minutes "$watch_limit" || ! positive_minutes "$rest_limit"; then
         reset_loop_state "$state_id"
         return 1
     fi
 
-    traffic_threshold=$(traffic_threshold_bytes)
-    signature=$(loop_signature "$target_key" "$watch_limit" "$rest_limit" "$traffic_threshold")
+    signature=$(loop_signature "$target_key" "$watch_limit" "$rest_limit")
     current_tick=$(current_minute_tick)
-    current_bytes=$(target_traffic_bytes "$target_key")
-    current_bytes=$(sanitize_counter "$current_bytes")
 
     ensure_loop_state_dir
     state_file=$(loop_state_file "$state_id")
@@ -730,14 +543,12 @@ cycle_target_should_block() {
         rest_left=$(sanitize_counter "$(loop_state_get "$state_file" rest_left "0")")
         offline_minutes=$(sanitize_counter "$(loop_state_get "$state_file" offline_minutes "0")")
         last_tick=$(sanitize_counter "$(loop_state_get "$state_file" last_tick "$current_tick")")
-        last_bytes=$(sanitize_counter "$(loop_state_get "$state_file" last_bytes "$current_bytes")")
     else
         mode="watch"
         watch_used=0
         rest_left=0
         offline_minutes=0
         last_tick=$current_tick
-        last_bytes=$current_bytes
     fi
 
     case "$mode" in
@@ -760,28 +571,12 @@ cycle_target_should_block() {
             fi
         fi
 
-        save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick" "$current_bytes"
+        save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
         [ "$mode" = "rest" ] && [ "$rest_left" -gt 0 ]
         return $?
     fi
 
-    active=0
-    if [ "$elapsed" -gt 0 ]; then
-        if [ "$current_bytes" -ge "$last_bytes" ]; then
-            traffic_delta=$((current_bytes - last_bytes))
-        else
-            traffic_delta=0
-        fi
-
-        if [ "$traffic_threshold" -gt 0 ]; then
-            traffic_limit=$((traffic_threshold * elapsed))
-            [ "$traffic_delta" -ge "$traffic_limit" ] && active=1
-        else
-            [ "$traffic_delta" -gt 0 ] && active=1
-        fi
-    fi
-
-    if [ "$active" -eq 1 ]; then
+    if target_key_is_online "$target_key"; then
         offline_minutes=0
 
         if [ "$elapsed" -gt 0 ]; then
@@ -794,7 +589,7 @@ cycle_target_should_block() {
             rest_left=$rest_limit
             offline_minutes=0
             dbg "Target $target_key reached viewing limit, resting for ${rest_limit}m"
-            save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick" "$current_bytes"
+            save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
             return 0
         fi
     else
@@ -809,7 +604,7 @@ cycle_target_should_block() {
         fi
     fi
 
-    save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick" "$current_bytes"
+    save_loop_state "$state_id" "$signature" "$mode" "$watch_used" "$rest_left" "$offline_minutes" "$current_tick"
     return 1
 }
 
@@ -1200,7 +995,7 @@ sync_ip_cycle_targets() {
     local id=$1
     local target=$2
     local output=$3
-    local watch_limit rest_limit ip ip_num blocked
+    local watch_limit rest_limit ip result_file pids active pid blocked
 
     watch_limit=$(config_t_get device watchtime "$id" "0")
     rest_limit=$(config_t_get device resttime "$id" "0")
@@ -1211,16 +1006,42 @@ sync_ip_cycle_targets() {
         return 1
     fi
 
+    result_file=$(mktemp "/tmp/${NAME}.ipcycle.XXXXXX") || return 1
+    pids=""
+    active=0
+
     for ip in $({ list_known_ips_in_target "$target"; list_tracked_ips_for_id "$id"; } | sort -u); do
         ip_target_contains_ip "$target" "$ip" || continue
 
-        if cycle_target_should_block "${id}_ip_${ip}" "ip $ip" "$watch_limit" "$rest_limit"; then
+        (
             ip_num=$(ip_to_int "$ip")
-            echo "$ip_num $ip_num" >> "$output"
-            blocked=0
+            if cycle_target_should_block "${id}_ip_${ip}" "ip $ip" "$watch_limit" "$rest_limit"; then
+                echo "$ip_num $ip_num" >> "$result_file"
+            fi
+        ) &
+
+        pids="$pids $!"
+        active=$((active + 1))
+
+        if [ "$active" -ge "$IP_CYCLE_PING_JOBS" ]; then
+            for pid in $pids; do
+                wait "$pid"
+            done
+            pids=""
+            active=0
         fi
     done
 
+    for pid in $pids; do
+        wait "$pid"
+    done
+
+    if [ -s "$result_file" ]; then
+        cat "$result_file" >> "$output"
+        blocked=0
+    fi
+
+    rm -f "$result_file"
     return "$blocked"
 }
 

@@ -1,7 +1,6 @@
 
 config timecontrol
 	option enabled '0'
-	option traffic_threshold '128'
 
 config device
 	option enable '0'

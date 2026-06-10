@@ -287,9 +287,7 @@ return view.extend({
 		m = new form.Map(CONFIG, _('Internet time control'),
 			_('Users can limit their internet usage time through MAC and IP, with available IP ranges such as 192.168.10.100-200,Managed devices will be unable to access the soft router\'s administrative interface!') +
 			'<br />' +
-			_('Set viewing or rest time to 0 to block for the whole start and stop time range. When both are greater than 0, the viewing and rest loop runs only inside that range; outside it, no control is applied.') +
-			'<br />' +
-			_('Viewing time is counted only when routed or bridged forwarding traffic exceeds the threshold. Set threshold to 0 to count any forwarding traffic.'));
+			_('Set viewing or rest time to 0 to block for the whole start and stop time range. When both are greater than 0, the viewing and rest loop runs only inside that range; outside it, no control is applied.'));
 
 		s = m.section(form.TypedSection, MAIN_SECTION);
 		s.anonymous = true;
@@ -297,12 +295,6 @@ return view.extend({
 		o = s.option(form.Flag, 'enabled', _('Timecontrol switch'));
 		o.rmempty = false;
 		o.default = '0';
-
-		o = s.option(form.Value, 'traffic_threshold', _('Traffic threshold(KB/min)'));
-		o.rmempty = false;
-		o.default = '512';
-		o.placeholder = '512';
-		o.validate = validateMinutes;
 
 		o = s.option(form.DummyValue, '_status', _('Status'));
 		o.rawhtml = true;
