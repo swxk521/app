@@ -374,14 +374,13 @@ ping_stable_online() {
 
                 if (rtt ~ /^[0-9]+([.][0-9]+)?$/) {
                     rtt += 0
-                    if (count == 0 || rtt < min) min = rtt
                     if (count == 0 || rtt > max) max = rtt
                     count++
                 }
             }
             END {
-                if (count < 9) exit 1
-                if ((max - min) > 500) exit 1
+                if (count < 8) exit 1
+                if (max > 300) exit 1
                 exit 0
             }'
 }
